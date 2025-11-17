@@ -28,6 +28,8 @@ import (
 	"github.com/cryft-labs/cryftgo/vms/platformvm/signer"
 	"github.com/cryft-labs/cryftgo/vms/propertyfx"
 	"github.com/cryft-labs/cryftgo/vms/secp256k1fx"
+
+	"github.com/cryft-labs/cryftgo/node/runtimeinfo"
 )
 
 var errNoChainProvided = errors.New("argument 'chain' not given")
@@ -59,6 +61,10 @@ type Parameters struct {
 	AddSubnetValidatorFee         uint64
 	AddSubnetDelegatorFee         uint64
 	VMManager                     vms.Manager
+
+	// GetRuntimeInfoFn is an optional hook to fetch runtime info from the node.
+	// It should mirror (*node.Node).GetRuntimeInfo.
+	GetRuntimeInfoFn func(r *http.Request) (*runtimeinfo.RuntimeInfo, error)
 }
 
 func NewService(
@@ -441,4 +447,52 @@ func (i *Info) GetVMs(_ *http.Request, _ *struct{}, reply *GetVMsReply) error {
 		propertyfx.ID:  propertyfx.Name,
 	}
 	return err
+}
+
+// GetRuntimeInfoReply are the results from calling GetRuntimeInfo
+type GetRuntimeInfoReply struct {
+	Runtime *RuntimeInfoView `json:"runtime,omitempty"`
+	Error   string           `json:"error,omitempty"`
+}
+
+type RuntimeInfoView struct {
+	Healthy bool   `json:"healthy"`
+	Epoch   uint64 `json:"epoch"`
+	Pinned  int    `json:"pinned"`
+	Missing int    `json:"missing"`
+}
+
+// GetRuntimeInfo returns a summarized view of local runtime/pin health as
+// reported by the Cryftee sidecar. When Cryftee is disabled or unreachable,
+// Runtime will be nil and Error will describe the failure.
+func (i *Info) GetRuntimeInfo(r *http.Request, _ *struct{}, reply *GetRuntimeInfoReply) error {
+	i.log.Debug("API called",
+		zap.String("service", "info"),
+		zap.String("method", "getRuntimeInfo"),
+	)
+
+	if i.GetRuntimeInfoFn == nil {
+		reply.Error = "runtime info not configured"
+		return nil
+	}
+
+	ctx := r.Context()
+	ri, err := i.GetRuntimeInfoFn(r.WithContext(ctx))
+	if err != nil {
+		reply.Error = err.Error()
+		return nil
+	}
+
+	if ri == nil {
+		reply.Error = "runtime info unavailable"
+		return nil
+	}
+
+	reply.Runtime = &RuntimeInfoView{
+		Healthy: ri.Healthy,
+		Epoch:   ri.Epoch,
+		Pinned:  ri.PinSummary.Pinned,
+		Missing: ri.PinSummary.Missing,
+	}
+	return nil
 }

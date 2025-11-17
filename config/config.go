@@ -1400,6 +1400,11 @@ func GetNodeConfig(v *viper.Viper) (node.Config, error) {
 		return node.Config{}, err
 	}
 
+	// Runtime / Cryftee integration
+	nodeConfig.RuntimeCryfteeURL = v.GetString(RuntimeCryfteeURLKey)
+	nodeConfig.RuntimeCryfteeTimeout = v.GetDuration(RuntimeCryfteeTimeoutKey)
+	nodeConfig.RuntimeCryfteeEnabled = v.GetBool(RuntimeCryfteeEnabledKey)
+
 	nodeConfig.ChainDataDir = GetExpandedArg(v, ChainDataDirKey)
 
 	nodeConfig.ProcessContextFilePath = GetExpandedArg(v, ProcessContextFileKey)

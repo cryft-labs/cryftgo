@@ -200,4 +200,7 @@ const (
 	TracingExporterTypeKey                             = "tracing-exporter-type"
 	TracingHeadersKey                                  = "tracing-headers"
 	ProcessContextFileKey                              = "process-context-file"
+	RuntimeCryfteeURLKey     = "runtime-cryftee-url"
+	RuntimeCryfteeTimeoutKey = "runtime-cryftee-timeout"
+	RuntimeCryfteeEnabledKey = "runtime-cryftee-enabled"
 )

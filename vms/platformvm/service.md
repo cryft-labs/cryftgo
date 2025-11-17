@@ -1712,7 +1712,10 @@ platform.getValidatorsAt(
         height: int,
         subnetID: string, // optional
     }
-)
+) ->
+{
+    validators: []string
+}
 ```
 
 - `height` is the P-Chain height to get the validator set at.
@@ -1981,3 +1984,61 @@ curl -X POST --data '{
   "id": 1
 }
 ```
+
+### `platform.getPinRequirements`
+
+Returns static IPFS pin requirements derived from `genesis/genesis_pins.json`.
+This RPC is observability-only and does not affect consensus, validator
+selection, or rewards.
+
+Pin requirements share epoch semantics with the external Cryftee sidecar.
+
+**Signature**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "platform.getPinRequirements",
+  "params": {
+    "epoch": 42
+  }
+}
+```
+
+`epoch` is optional. If omitted, all configured pin requirements are returned.
+
+**Response**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "requirements": [
+      {
+        "cid": "QmExample1",
+        "fromEpoch": 0,
+        "toEpoch": 0
+      },
+      {
+        "cid": "QmExample2",
+        "fromEpoch": 10,
+        "toEpoch": 100
+      }
+    ]
+  }
+}
+```
+
+A requirement is considered active at a given epoch if:
+
+```text
+fromEpoch <= epoch && (toEpoch == 0 || epoch <= toEpoch)
+```
+
+**Notes**
+
+- `genesis_pins.json` is the single source of initial IPFS pin requirements.
+- The same file is consumed by the Cryftee sidecar.
+- Future work may move pin governance on-chain.

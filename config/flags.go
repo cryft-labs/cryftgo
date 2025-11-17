@@ -360,6 +360,11 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.Float64(TracingSampleRateKey, 0.1, "The fraction of traces to sample. If >= 1, always sample. If <= 0, never sample")
 	fs.StringToString(TracingHeadersKey, map[string]string{}, "The headers to provide the trace indexer")
 
+	// Runtime / Cryftee
+	fs.String(RuntimeCryfteeURLKey, "", "Base URL for the Cryftee runtime sidecar (e.g. http://127.0.0.1:9099)")
+	fs.Duration(RuntimeCryfteeTimeoutKey, 5*time.Second, "HTTP timeout when querying Cryftee runtime sidecar")
+	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable integration with Cryftee runtime sidecar")
+
 	fs.String(ProcessContextFileKey, defaultProcessContextPath, "The path to write process context to (including PID, API URI, and staking address).")
 }
 

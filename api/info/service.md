@@ -687,3 +687,47 @@ curl -X POST --data '{
   }
 }
 ```
+
+### `info.getRuntimeInfo`
+
+Returns a summarized view of local runtime and pin health as reported by the
+configured Cryftee sidecar.
+
+If the sidecar is disabled or unreachable, `runtime` will be omitted and
+`error` will describe the failure. No consensus behavior depends on this data.
+
+**Signature**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "info.getRuntimeInfo",
+  "params": {}
+}
+```
+
+**Response**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "runtime": {
+      "healthy": true,
+      "epoch": 42,
+      "pinned": 10,
+      "missing": 0
+    },
+    "error": ""
+  }
+}
+```
+
+**Notes**
+
+- `healthy` reflects the sidecar's aggregate view of runtime/pin health.
+- `epoch` is the current epoch used when evaluating pin requirements.
+- `pinned` / `missing` are counts from the PinSummary returned by Cryftee.
+- This method is observability-only and does not affect consensus.

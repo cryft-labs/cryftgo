@@ -109,6 +109,28 @@ API is enabled.) Defaults to `0s`.
 Maximum duration to wait for existing connections to complete during node
 shutdown. Defaults to `10s`.
 
+## Runtime / Cryftee
+
+These options configure integration with the external Cryftee runtime sidecar. All
+Cryftee-derived data is observability-only and never affects consensus safety.
+
+#### `--runtime-cryftee-url` (string)
+
+Base URL for the Cryftee sidecar HTTP API (for example, `http://127.0.0.1:9099`).
+If empty, Cryftee integration is effectively disabled regardless of
+`--runtime-cryftee-enabled`.
+
+#### `--runtime-cryftee-timeout` (duration)
+
+HTTP timeout used when querying Cryftee (for example, `5s`). Defaults to `5s`.
+
+#### `--runtime-cryftee-enabled` (boolean)
+
+If set to `true` and `--runtime-cryftee-url` is non-empty, the node will
+periodically query the Cryftee sidecar for runtime and pin health information,
+which is exposed via the Info API (for example, `info.getRuntimeInfo`). Defaults
+to `false`.
+
 ## Bootstrapping
 
 #### `--bootstrap-beacon-connection-timeout` (duration)

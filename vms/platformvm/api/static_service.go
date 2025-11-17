@@ -5,12 +5,16 @@ package api
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/cryft-labs/cryftgo/ids"
 	"github.com/cryft-labs/cryftgo/utils"
+	"github.com/cryft-labs/cryftgo/utils/constants"
 	"github.com/cryft-labs/cryftgo/utils/formatting"
 	"github.com/cryft-labs/cryftgo/utils/formatting/address"
 	"github.com/cryft-labs/cryftgo/utils/json"
@@ -400,5 +404,77 @@ func (*StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, repl
 		return fmt.Errorf("couldn't encode genesis as string: %w", err)
 	}
 	reply.Encoding = args.Encoding
+	return nil
+}
+
+// PinRequirement mirrors the schema in genesis/genesis_pins.json and is
+// returned by GetPinRequirements.
+type PinRequirement struct {
+	CID       string `json:"cid"`
+	FromEpoch uint64 `json:"fromEpoch"`
+	ToEpoch   uint64 `json:"toEpoch"` // 0 == no upper bound
+}
+
+type GetPinRequirementsArgs struct {
+	// Optional epoch filter; if nil, all requirements are returned.
+	Epoch *uint64 `json:"epoch,omitempty"`
+}
+
+type GetPinRequirementsReply struct {
+	Requirements []PinRequirement `json:"requirements"`
+}
+
+type genesisPinsConfig struct {
+	RequiredDirs []PinRequirement `json:"requiredDirs"`
+}
+
+// activePinRequirements applies the same epoch activation logic as Cryftee.
+// A requirement is active if FromEpoch <= epoch && (ToEpoch == 0 || epoch <= ToEpoch).
+func activePinRequirements(all []PinRequirement, epoch uint64) []PinRequirement {
+	active := make([]PinRequirement, 0, len(all))
+	for _, r := range all {
+		if r.FromEpoch <= epoch && (r.ToEpoch == 0 || epoch <= r.ToEpoch) {
+			active = append(active, r)
+		}
+	}
+	return active
+}
+
+// loadGenesisPinRequirements reads genesis/genesis_pins.json, which is the
+// single source of initial IPFS pin requirements. The same file is consumed
+// by the external Cryftee sidecar.
+//
+// TODO: replace this static file lookup with on-chain pin governance when
+// available.
+func loadGenesisPinRequirements() ([]PinRequirement, error) {
+	p := filepath.Join(constants.GenesisDir, "genesis_pins.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", p, err)
+	}
+
+	var cfg genesisPinsConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s: %w", p, err)
+	}
+	return cfg.RequiredDirs, nil
+}
+
+// GetPinRequirements is a static PlatformVM RPC that returns IPFS pin
+// requirements derived from genesis/genesis_pins.json. This method is
+// observability-only and does not affect consensus, validator selection,
+// or rewards.
+func (*StaticService) GetPinRequirements(_ *http.Request, args *GetPinRequirementsArgs, reply *GetPinRequirementsReply) error {
+	all, err := loadGenesisPinRequirements()
+	if err != nil {
+		return err
+	}
+
+	if args != nil && args.Epoch != nil {
+		reply.Requirements = activePinRequirements(all, *args.Epoch)
+		return nil
+	}
+
+	reply.Requirements = all
 	return nil
 }

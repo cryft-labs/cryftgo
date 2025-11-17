@@ -71,3 +71,18 @@ func deprecateConfigs(v *viper.Viper, output io.Writer) {
 		}
 	}
 }
+
+func BindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
+	// Runtime / Cryftee
+	if err := v.BindPFlag(RuntimeCryfteeURLKey, fs.Lookup(RuntimeCryfteeURLKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(RuntimeCryfteeTimeoutKey, fs.Lookup(RuntimeCryfteeTimeoutKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(RuntimeCryfteeEnabledKey, fs.Lookup(RuntimeCryfteeEnabledKey)); err != nil {
+		return err
+	}
+
+	return nil
+}

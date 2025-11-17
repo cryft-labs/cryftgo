@@ -123,6 +123,14 @@ func New(
 		Config:           config,
 	}
 
+	// Configure Cryftee runtime client if enabled.
+	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
+		n.runtimeClient = NewHTTPRuntimeInfoClient(
+			config.RuntimeCryfteeURL,
+			config.RuntimeCryfteeTimeout,
+		)
+	}
+
 	n.DoneShuttingDown.Add(1)
 
 	pop := signer.NewProofOfPossession(n.Config.StakingSigningKey)
@@ -377,6 +385,9 @@ type Node struct {
 	// Specifies how much disk usage each peer can cause before
 	// we rate-limit them.
 	diskTargeter tracker.Targeter
+
+	// Runtime info / Cryftee client. Nil when disabled or misconfigured.
+	runtimeClient RuntimeInfoClient
 }
 
 /*
@@ -1630,4 +1641,13 @@ func (n *Node) shutdown() {
 
 func (n *Node) ExitCode() int {
 	return n.shuttingDownExitCode.Get()
+}
+
+// GetRuntimeInfo proxies runtime/pin health from the configured Cryftee sidecar.
+// Returns an error if the client is not configured or Cryftee is unreachable.
+func (n *Node) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, error) {
+	if n.runtimeClient == nil {
+		return nil, errors.New("runtime info client not configured")
+	}
+	return n.runtimeClient.GetRuntimeInfo(ctx)
 }

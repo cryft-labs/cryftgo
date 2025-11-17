@@ -206,6 +206,11 @@ type Config struct {
 	// See comment on [UseCurrentHeight] in platformvm.Config
 	UseCurrentHeight bool `json:"useCurrentHeight"`
 
+	// Runtime / Cryftee sidecar settings
+	RuntimeCryfteeURL     string        `json:"runtimeCryfteeURL" yaml:"runtimeCryfteeURL"`
+	RuntimeCryfteeTimeout time.Duration `json:"runtimeCryfteeTimeout" yaml:"runtimeCryfteeTimeout"`
+	RuntimeCryfteeEnabled bool          `json:"runtimeCryfteeEnabled" yaml:"runtimeCryfteeEnabled"`
+
 	// ProvidedFlags contains all the flags set by the user
 	ProvidedFlags map[string]interface{} `json:"-"`
 
