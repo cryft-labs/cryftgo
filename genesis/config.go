@@ -248,3 +248,21 @@ func parseGenesisJSONBytesToConfig(bytes []byte) (*Config, error) {
 	}
 	return &config, nil
 }
+
+type PinGovernor struct {
+	PubKey    []byte // or ids.NodeID / secp key
+	FromEpoch uint64
+	ToEpoch   uint64 // 0 == no upper bound
+	Weight    uint64 // optional; default 1 if you want equal-weight governors
+}
+
+type PinGovernanceConfig struct {
+	Governors         []PinGovernor
+	ApprovalThreshold float64 // 0..1
+}
+
+type PinRequirement struct {
+	CID       string
+	FromEpoch uint64
+	ToEpoch   uint64 // 0 == no upper bound
+}
