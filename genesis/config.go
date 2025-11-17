@@ -94,6 +94,12 @@ type Config struct {
 	InitialStakedFunds         []ids.ShortID `json:"initialStakedFunds"`
 	InitialStakers             []Staker      `json:"initialStakers"`
 
+	// PinGovernanceValidators is the (optional) static set of node IDs that
+	// are allowed to participate in pin-governance (for example, voting on
+	// adding/removing pin requirements). When non-empty, the set must contain
+	// unique node IDs.
+	PinGovernanceValidators []ids.NodeID `json:"pinGovernanceValidators,omitempty"`
+
 	CChainGenesis string `json:"cChainGenesis"`
 
 	Message string `json:"message"`
@@ -108,6 +114,7 @@ func (c Config) Unparse() (UnparsedConfig, error) {
 		InitialStakeDurationOffset: c.InitialStakeDurationOffset,
 		InitialStakedFunds:         make([]string, len(c.InitialStakedFunds)),
 		InitialStakers:             make([]UnparsedStaker, len(c.InitialStakers)),
+		PinGovernanceValidators:    make([]ids.NodeID, len(c.PinGovernanceValidators)),
 		CChainGenesis:              c.CChainGenesis,
 		Message:                    c.Message,
 	}
@@ -136,6 +143,7 @@ func (c Config) Unparse() (UnparsedConfig, error) {
 		}
 		uc.InitialStakers[i] = uis
 	}
+	copy(uc.PinGovernanceValidators, c.PinGovernanceValidators)
 
 	return uc, nil
 }
@@ -246,18 +254,22 @@ func parseGenesisJSONBytesToConfig(bytes []byte) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse config: %w", err)
 	}
+
+	// If pin governance is configured, ensure the validator set is non-empty
+	// and contains unique node IDs. This keeps later logic simple and avoids
+	// ambiguous governance behavior.
+	if len(config.PinGovernanceValidators) > 0 {
+		seen := make(map[ids.NodeID]struct{}, len(config.PinGovernanceValidators))
+		for _, nodeID := range config.PinGovernanceValidators {
+			if _, exists := seen[nodeID]; exists {
+				return nil, fmt.Errorf("duplicate pin governance validator in genesis: %s", nodeID)
+			}
+			seen[nodeID] = struct{}{}
+		}
+	}
+
 	return &config, nil
 }
-
-type PinGovernor struct {
-	PubKey    []byte // or ids.NodeID / secp key
-	FromEpoch uint64
-	ToEpoch   uint64 // 0 == no upper bound
-	Weight    uint64 // optional; default 1 if you want equal-weight governors
-}
-
-type PinGovernanceConfig struct {
-	Governors         []PinGovernor
 	ApprovalThreshold float64 // 0..1
 }
 
