@@ -125,9 +125,19 @@ func New(
 
 	// Configure Cryftee runtime client if enabled.
 	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
+		logger.Info("initializing Cryftee runtime client",
+			zap.String("url", config.RuntimeCryfteeURL),
+			zap.Duration("timeout", config.RuntimeCryfteeTimeout),
+		)
 		n.runtimeClient = NewHTTPRuntimeInfoClient(
 			config.RuntimeCryfteeURL,
 			config.RuntimeCryfteeTimeout,
+		)
+	} else {
+		logger.Info("Cryftee runtime disabled or URL not set",
+			zap.Bool("runtimeCryfteeEnabled", config.RuntimeCryfteeEnabled),
+			zap.String("runtimeCryfteeURL", config.RuntimeCryfteeURL),
+			zap.Duration("runtimeCryfteeTimeout", config.RuntimeCryfteeTimeout),
 		)
 	}
 
