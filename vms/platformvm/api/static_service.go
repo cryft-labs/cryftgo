@@ -461,9 +461,7 @@ func loadGenesisPinRequirements() ([]PinRequirement, error) {
 }
 
 // GetPinRequirements is a static PlatformVM RPC that returns IPFS pin
-// requirements derived from genesis/genesis_pins.json. This method is
-// observability-only and does not affect consensus, validator selection,
-// or rewards.
+// requirements derived from genesis/genesis_pins.json.
 func (*StaticService) GetPinRequirements(_ *http.Request, args *GetPinRequirementsArgs, reply *GetPinRequirementsReply) error {
 	all, err := loadGenesisPinRequirements()
 	if err != nil {

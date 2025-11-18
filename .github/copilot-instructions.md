@@ -71,8 +71,6 @@
 - **Runtime info surface area**:
   - A `runtimeinfo`-style type in `cryftgo` should mirror Cryftee’s `RuntimeInfo` JSON and be used by a `RuntimeInfoClient` that calls Cryftee’s `/runtime/self` endpoint.
   - Info API handlers should call into the node’s `GetRuntimeInfo` method and expose a view tailored for clients (for example, health/epoch/pin counts), handling the disabled/unreachable sidecar case gracefully.
-- **Consensus safety**:
-  - Cryftee-derived data is currently **observability-only**. Do not gate consensus, validator selection, rewards, or block validity on Cryftee responses.
 
 ## How to Work Effectively as an AI Agent
 - Reuse existing helpers (`test_*`, `mock_*`, `New*` constructors) instead of duplicating logic.

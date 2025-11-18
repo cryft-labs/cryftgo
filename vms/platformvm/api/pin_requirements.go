@@ -60,8 +60,7 @@ func loadGenesisPinRequirements() ([]PinRequirement, error) {
 }
 
 // GetPinRequirements returns static IPFS pin requirements derived from
-// genesis/genesis_pins.json. This RPC is observability-only.
-// TODO: replace with on-chain pin governance when available.
+// genesis/genesis_pins.json.
 func (ss *StaticService) GetPinRequirements(_ *http.Request, args *GetPinRequirementsArgs, reply *GetPinRequirementsReply) error {
     all, err := loadGenesisPinRequirements()
     if err != nil {

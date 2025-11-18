@@ -111,8 +111,7 @@ shutdown. Defaults to `10s`.
 
 ## Runtime / Cryftee
 
-These options configure integration with the external Cryftee runtime sidecar. All
-Cryftee-derived data is observability-only and never affects consensus safety.
+These options configure integration with the external Cryftee runtime sidecar.
 
 #### `--runtime-cryftee-url` (string)
 
