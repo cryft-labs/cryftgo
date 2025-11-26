@@ -18,7 +18,7 @@ while getopts 'r' flag; do
   case "${flag}" in
     r) race='-r' ;;
     *) print_usage
-      exit 1 ;;
+       exit 1 ;;
   esac
 done
 
@@ -33,14 +33,14 @@ go mod download
 
 build_args="$race"
 
-# Build cryftgo
-"$AVALANCHE_PATH"/scripts/build_avalanche.sh $build_args
+# Build cryftgo (force bash so we don't care about exec bit on the script)
+bash "$AVALANCHE_PATH"/scripts/build_avalanche.sh $build_args
 
 # Exit build successfully if the CryftGo binary is created successfully
 if [[ -f "$cryftgo_path" ]]; then
-        echo "Build Successful"
-        exit 0
+  echo "Build Successful"
+  exit 0
 else
-        echo "Build failure" >&2
-        exit 1
+  echo "Build failure" >&2
+  exit 1
 fi
