@@ -34,7 +34,7 @@ type LockedAmount struct {
 
 type Allocation struct {
 	ETHAddr        ids.ShortID    `json:"ethAddr"`
-	CRYFTAddr       ids.ShortID    `json:"cryftAddr"`
+	CRYFTAddr      ids.ShortID    `json:"cryftAddr"`
 	InitialAmount  uint64         `json:"initialAmount"`
 	UnlockSchedule []LockedAmount `json:"unlockSchedule"`
 }
@@ -114,7 +114,6 @@ func (c Config) Unparse() (UnparsedConfig, error) {
 		InitialStakeDurationOffset: c.InitialStakeDurationOffset,
 		InitialStakedFunds:         make([]string, len(c.InitialStakedFunds)),
 		InitialStakers:             make([]UnparsedStaker, len(c.InitialStakers)),
-		PinGovernanceValidators:    make([]ids.NodeID, len(c.PinGovernanceValidators)),
 		CChainGenesis:              c.CChainGenesis,
 		Message:                    c.Message,
 	}
@@ -143,7 +142,6 @@ func (c Config) Unparse() (UnparsedConfig, error) {
 		}
 		uc.InitialStakers[i] = uis
 	}
-	copy(uc.PinGovernanceValidators, c.PinGovernanceValidators)
 
 	return uc, nil
 }
@@ -269,12 +267,4 @@ func parseGenesisJSONBytesToConfig(bytes []byte) (*Config, error) {
 	}
 
 	return &config, nil
-}
-	ApprovalThreshold float64 // 0..1
-}
-
-type PinRequirement struct {
-	CID       string
-	FromEpoch uint64
-	ToEpoch   uint64 // 0 == no upper bound
 }
