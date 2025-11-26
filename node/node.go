@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -48,6 +49,7 @@ import (
 	"github.com/cryft-labs/cryftgo/network/dialer"
 	"github.com/cryft-labs/cryftgo/network/peer"
 	"github.com/cryft-labs/cryftgo/network/throttling"
+	"github.com/cryft-labs/cryftgo/node/runtimeinfo"
 	"github.com/cryft-labs/cryftgo/snow"
 	"github.com/cryft-labs/cryftgo/snow/networking/benchlist"
 	"github.com/cryft-labs/cryftgo/snow/networking/router"
@@ -79,9 +81,9 @@ import (
 	"github.com/cryft-labs/cryftgo/vms/registry"
 	"github.com/cryft-labs/cryftgo/vms/rpcchainvm/runtime"
 
+	coreth "github.com/cryft-labs/coreth/plugin/evm"
 	avmconfig "github.com/cryft-labs/cryftgo/vms/avm/config"
 	platformconfig "github.com/cryft-labs/cryftgo/vms/platformvm/config"
-	coreth "github.com/cryft-labs/coreth/plugin/evm"
 )
 
 const (
@@ -1098,7 +1100,7 @@ func (n *Node) initChainManager(cryftAssetID ids.ID) error {
 			Server:                                  n.APIServer,
 			Keystore:                                n.keystore,
 			AtomicMemory:                            n.sharedMemory,
-			CRYFTAssetID:                             cryftAssetID,
+			CRYFTAssetID:                            cryftAssetID,
 			XChainID:                                xChainID,
 			CChainID:                                cChainID,
 			CriticalChains:                          criticalChains,
@@ -1352,6 +1354,10 @@ func (n *Node) initInfoAPI() error {
 			AddSubnetValidatorFee:         n.Config.AddSubnetValidatorFee,
 			AddSubnetDelegatorFee:         n.Config.AddSubnetDelegatorFee,
 			VMManager:                     n.VMManager,
+			// Optional hook; safe even if runtimeClient is nil.
+			GetRuntimeInfoFn: func(r *http.Request) (*runtimeinfo.RuntimeInfo, error) {
+				return n.GetRuntimeInfo(r.Context())
+			},
 		},
 		n.Log,
 		n.vdrs,
@@ -1364,11 +1370,7 @@ func (n *Node) initInfoAPI() error {
 	if err != nil {
 		return err
 	}
-	return n.APIServer.AddRoute(
-		service,
-		"info",
-		"",
-	)
+	return n.APIServer.AddRoute(service, "info", "")
 }
 
 // initHealthAPI initializes the Health API service
@@ -1654,7 +1656,7 @@ func (n *Node) ExitCode() int {
 }
 
 // GetRuntimeInfo proxies runtime/pin health from the configured Cryftee sidecar.
-// Returns an error if the client is not configured or Cryftee is unreachable.
+// If the runtime client is not configured, it just returns an error.
 func (n *Node) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, error) {
 	if n.runtimeClient == nil {
 		return nil, errors.New("runtime info client not configured")
