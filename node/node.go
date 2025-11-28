@@ -1255,7 +1255,7 @@ func New(
 		Config:           config,
 	}
 
-	// Cryftee manager - only if binary path is provided AND Web3Signer is enabled
+	// Cryftee manager - only if Web3Signer is enabled
 	if config.Web3SignerEnabled {
 		if config.CryfteeBinaryPath == "" {
 			return nil, fmt.Errorf("--staking-web3signer-enabled requires --cryftee-binary-path to be set")
@@ -1297,7 +1297,8 @@ func New(
 			return nil, fmt.Errorf("key initialization failed: %w", err)
 		}
 
-		// Override NodeID with the one derived from Web3Signer TLS key
+		// Parse NodeID from the TLS key info
+		// The NodeID format is "NodeID-<hex>" so we need to parse it
 		nodeID, err := ids.NodeIDFromString(tlsKeyInfo.NodeID)
 		if err != nil {
 			_ = n.cryfteeManager.Stop()
@@ -1333,7 +1334,7 @@ func New(
 		)
 	}
 
-	// Runtime info client - only if explicitly enabled (separate from Web3Signer mode)
+	// Runtime info client - only if explicitly enabled
 	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
 		logger.Info("initializing Cryftee runtime client",
 			zap.String("url", config.RuntimeCryfteeURL),
