@@ -72,18 +72,6 @@ type IPConfig struct {
 	ListenPort uint16 `json:"listenPort"`
 }
 
-type StakingConfig struct {
-	genesis.StakingConfig
-	SybilProtectionEnabled        bool            `json:"sybilProtectionEnabled"`
-	PartialSyncPrimaryNetwork     bool            `json:"partialSyncPrimaryNetwork"`
-	StakingTLSCert                tls.Certificate `json:"-"`
-	StakingSigningKey             *bls.SecretKey  `json:"-"`
-	SybilProtectionDisabledWeight uint64          `json:"sybilProtectionDisabledWeight"`
-	StakingKeyPath                string          `json:"stakingKeyPath"`
-	StakingCertPath               string          `json:"stakingCertPath"`
-	StakingSignerPath             string          `json:"stakingSignerPath"`
-}
-
 type StateSyncConfig struct {
 	StateSyncIDs []ids.NodeID `json:"stateSyncIDs"`
 	StateSyncIPs []ips.IPPort `json:"stateSyncIPs"`
@@ -133,7 +121,7 @@ type Config struct {
 
 	// Genesis information
 	GenesisBytes []byte `json:"-"`
-	CryftAssetID  ids.ID `json:"cryftAssetID"`
+	CryftAssetID ids.ID `json:"cryftAssetID"`
 
 	// ID of the network this node should connect to
 	NetworkID uint32 `json:"networkID"`
@@ -211,6 +199,13 @@ type Config struct {
 	RuntimeCryfteeTimeout time.Duration `json:"runtimeCryfteeTimeout" yaml:"runtimeCryfteeTimeout"`
 	RuntimeCryfteeEnabled bool          `json:"runtimeCryfteeEnabled" yaml:"runtimeCryfteeEnabled"`
 
+	// Cryftee binary management: when CryfteeBinaryPath is set, cryftgo can
+	// optionally spawn and manage the Cryftee process itself (useful for
+	// single-binary deployments or TEE environments).
+	CryfteeBinaryPath     string        `json:"cryfteeBinaryPath" yaml:"cryfteeBinaryPath"`
+	CryfteeExpectedHashes []string      `json:"cryfteeExpectedHashes" yaml:"cryfteeExpectedHashes"`
+	CryfteeStartupTimeout time.Duration `json:"cryfteeStartupTimeout" yaml:"cryfteeStartupTimeout"`
+
 	// ProvidedFlags contains all the flags set by the user
 	ProvidedFlags map[string]interface{} `json:"-"`
 
@@ -221,4 +216,40 @@ type Config struct {
 	// Path to write process context to (including PID, API URI, and
 	// staking address).
 	ProcessContextFilePath string `json:"processContextFilePath"`
+
+	// Optional remote signers for staking. When non-nil and Web3SignerEnabled
+	// is true, Node.New/initNetworking/initChainManager should prefer these
+	// over StakingSigningKey / StakingTLSCert for staking-related BLS/TLS
+	// signing. Implementations are expected to be Cryftee/Web3Signer-backed.
+	RemoteBLSSigner RemoteBLSSigner `json:"-"`
+	RemoteTLSSigner RemoteTLSSigner `json:"-"`
+}
+
+// StakingConfig is configuration settings for staking.
+type StakingConfig struct {
+	genesis.StakingConfig
+	SybilProtectionEnabled        bool            `json:"sybilProtectionEnabled"`
+	PartialSyncPrimaryNetwork     bool            `json:"partialSyncPrimaryNetwork"`
+	StakingTLSCert                tls.Certificate `json:"-"`
+	StakingSigningKey             *bls.SecretKey  `json:"-"`
+	SybilProtectionDisabledWeight uint64          `json:"sybilProtectionDisabledWeight"`
+	StakingKeyPath                string          `json:"stakingKeyPath"`
+	StakingCertPath               string          `json:"stakingCertPath"`
+	StakingSignerPath             string          `json:"stakingSignerPath"`
+
+	// Web3Signer / Cryftee-backed staking configuration. When enabled, the
+	// main signing engine should treat StakingSigningKey/StakingTLSCert as
+	// local defaults only and instead rely on the external signer (via
+	// Cryftee) for both BLS staking signatures and, where configured, TLS
+	// materials:
+	//
+	//   - Web3SignerEnabled: delegate staking/TLS signing to Cryftee/Web3Signer.
+	//   - Web3SignerEphemeral: ephemeral test mode; key material provided
+	//     via Web3SignerKeyMaterialB64 for this process only.
+	//   - Web3SignerKeyMaterialB64: optional base64-encoded BLS secret key
+	//     material to hand to Cryftee/Web3Signer for import. Empty means
+	//     "let Web3Signer manage its own persisted keys".
+	Web3SignerEnabled        bool   `json:"web3SignerEnabled"`
+	Web3SignerEphemeral      bool   `json:"web3SignerEphemeral"`
+	Web3SignerKeyMaterialB64 string `json:"web3SignerKeyMaterialB64"`
 }

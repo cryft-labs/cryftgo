@@ -7,7 +7,7 @@ module github.com/cryft-labs/cryftgo
 go 1.21.10
 
 require (
-	github.com/DataDog/zstd v1.5.2
+	github.com/DataDog/zstd v1.5.7
 	github.com/NYTimes/gziphandler v1.1.1
 	github.com/ava-labs/ledger-avalanche/go v0.0.0-20231102202641-ae2ebdaeac34
 	github.com/btcsuite/btcd/btcutil v1.1.3

@@ -84,5 +84,27 @@ func BindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
 		return err
 	}
 
+	// Cryftee binary management
+	if err := v.BindPFlag(CryfteeBinaryPathKey, fs.Lookup(CryfteeBinaryPathKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(CryfteeExpectedHashesKey, fs.Lookup(CryfteeExpectedHashesKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(CryfteeStartupTimeoutKey, fs.Lookup(CryfteeStartupTimeoutKey)); err != nil {
+		return err
+	}
+
+	// Web3Signer / Cryftee-backed staking
+	if err := v.BindPFlag(StakingWeb3SignerEnabledKey, fs.Lookup(StakingWeb3SignerEnabledKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(StakingWeb3SignerEphemeralKey, fs.Lookup(StakingWeb3SignerEphemeralKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(StakingWeb3SignerKeyMaterialB64Key, fs.Lookup(StakingWeb3SignerKeyMaterialB64Key)); err != nil {
+		return err
+	}
+
 	return nil
 }

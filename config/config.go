@@ -79,12 +79,13 @@ var (
 	errCannotTrackPrimaryNetwork              = errors.New("cannot track primary network")
 	errStakingKeyContentUnset                 = fmt.Errorf("%s key not set but %s set", StakingTLSKeyContentKey, StakingCertContentKey)
 	errStakingCertContentUnset                = fmt.Errorf("%s key set but %s not set", StakingTLSKeyContentKey, StakingCertContentKey)
-	errMissingStakingSigningKeyFile           = errors.New("missing staking signing key file")
+	errMissingStakingSigningKeyFile           = errors.New("missing staking signing key")
 	errTracingEndpointEmpty                   = fmt.Errorf("%s cannot be empty", TracingEndpointKey)
 	errPluginDirNotADirectory                 = errors.New("plugin dir is not a directory")
 	errCannotReadDirectory                    = errors.New("cannot read directory")
 	errUnmarshalling                          = errors.New("unmarshalling failed")
 	errFileDoesNotExist                       = errors.New("file does not exist")
+	errWeb3SignerEphemeralAndKeyMaterial      = errors.New("staking-web3signer-ephemeral and staking-web3signer-key-material cannot both be set")
 )
 
 func getConsensusConfig(v *viper.Viper) snowball.Parameters {
@@ -574,6 +575,8 @@ func getProfilerConfig(v *viper.Viper) (profiler.Config, error) {
 }
 
 func getStakingTLSCertFromFlag(v *viper.Viper) (tls.Certificate, error) {
+	// 1) Read base64-encoded key/cert values from Viper (which is wired to
+	//    CLI flags and environment variables).
 	stakingKeyRawContent := v.GetString(StakingTLSKeyContentKey)
 	stakingKeyContent, err := base64.StdEncoding.DecodeString(stakingKeyRawContent)
 	if err != nil {
@@ -586,11 +589,15 @@ func getStakingTLSCertFromFlag(v *viper.Viper) (tls.Certificate, error) {
 		return tls.Certificate{}, fmt.Errorf("unable to decode base64 content: %w", err)
 	}
 
+	// 2) Use staking.LoadTLSCertFromBytes to turn those PEM bytes into a
+	//    tls.Certificate (including parsing the X.509 leaf).
 	cert, err := staking.LoadTLSCertFromBytes(stakingKeyContent, stakingCertContent)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("failed creating cert: %w", err)
 	}
 
+	// 3) Return the tls.Certificate value; the caller (getStakingTLSCert)
+	//    stores it into node.Config.StakingTLSCert.
 	return *cert, nil
 }
 
@@ -622,8 +629,23 @@ func getStakingTLSCertFromFile(v *viper.Viper) (tls.Certificate, error) {
 }
 
 func getStakingTLSCert(v *viper.Viper) (tls.Certificate, error) {
+	// When Web3Signer/Cryftee-backed signing is enabled, we still allow the
+	// local TLS staking certificate path to be used as the *default* source
+	// of TLS material, but higher layers may choose to ignore this and obtain
+	// TLS keys/certs directly from Web3Signer instead. In other words:
+	//
+	//   - Web3Signer disabled  => this function defines the staking TLS cert.
+	//   - Web3Signer enabled   => this function defines the default local
+	//                             cert, but the external signer is expected
+	//                             to be the authoritative source of TLS
+	//                             state for production setups.
+	//
+	// The logic below remains unchanged and continues to support:
+	//   - ephemeral TLS certs,
+	//   - inline base64 key/cert,
+	//   - file-based key/cert generation and loading.
 	if v.GetBool(StakingEphemeralCertEnabledKey) {
-		// Use an ephemeral staking key/cert
+		// ephemeral, in-memory only
 		cert, err := staking.NewTLSCert()
 		if err != nil {
 			return tls.Certificate{}, fmt.Errorf("couldn't generate ephemeral staking key/cert: %w", err)
@@ -637,13 +659,46 @@ func getStakingTLSCert(v *viper.Viper) (tls.Certificate, error) {
 	case !v.IsSet(StakingTLSKeyContentKey) && v.IsSet(StakingCertContentKey):
 		return tls.Certificate{}, errStakingKeyContentUnset
 	case v.IsSet(StakingTLSKeyContentKey) && v.IsSet(StakingCertContentKey):
+		// inline base64 key/cert
 		return getStakingTLSCertFromFlag(v)
 	default:
+		// default: file-based key/cert
 		return getStakingTLSCertFromFile(v)
 	}
 }
 
+func web3SignerEnabled(v *viper.Viper) bool {
+	// True when staking BLS/TLS is delegated to Cryftee/Web3Signer.
+	return v.GetBool(StakingWeb3SignerEnabledKey)
+}
+
+// getStakingSigner returns the BLS staking signer used by the node.
+// It supports three broad modes:
+//
+//  1. Ephemeral: generate in-memory only.
+//  2. Inline: base64-encoded raw key material.
+//  3. File-based: default, generate signer.key on first boot and reuse.
+//
+// When web3SignerEnabled(v) is true, this function will *not* generate or
+// load a local BLS key. Instead, it defers to an external Web3Signer service.
+// The local keygen path is preserved as the default when Web3Signer is not
+// configured.
 func getStakingSigner(v *viper.Viper) (*bls.SecretKey, error) {
+	// --- Web3Signer mode: remote BLS signer instead of local keygen ---
+	if web3SignerEnabled(v) {
+		// In Web3Signer/Cryftee mode we do not use or derive a local BLS
+		// secret key for staking. Even in "ephemeral" test mode, where
+		// getStakingConfig generates a temporary BLS key via bls.NewSecretKey,
+		// that key is *only* exported as base64 in
+		// node.StakingConfig.Web3SignerKeyMaterialB64 for Cryftee/Web3Signer
+		// to consume. It is never returned here or used for local signing.
+		//
+		// This ensures a single source of ephemeral keygen logic (the existing
+		// bls.NewSecretKey) while cleanly redirecting signing to Web3Signer.
+		return nil, fmt.Errorf("web3signer-backed staking signer is enabled; local staking signing key is not used")
+	}
+
+	// --- Existing local/ephemeral behavior (unchanged) ---
 	if v.GetBool(StakingEphemeralSignerEnabledKey) {
 		key, err := bls.NewSecretKey()
 		if err != nil {
@@ -711,12 +766,56 @@ func getStakingConfig(v *viper.Viper, networkID uint32) (node.StakingConfig, err
 		StakingCertPath:               GetExpandedArg(v, StakingCertPathKey),
 		StakingSignerPath:             GetExpandedArg(v, StakingSignerKeyPathKey),
 	}
+
 	if !config.SybilProtectionEnabled && config.SybilProtectionDisabledWeight == 0 {
 		return node.StakingConfig{}, errSybilProtectionDisabledStakerWeights
 	}
 
 	if !config.SybilProtectionEnabled && (networkID == constants.MainnetID || networkID == constants.MustangID) {
 		return node.StakingConfig{}, errSybilProtectionDisabledOnPublicNetwork
+	}
+
+	// Web3Signer / Cryftee-backed staking flags define three *remote* modes
+	// for BLS signing (and optionally TLS if higher layers choose to source
+	// TLS material from Web3Signer as well):
+	//
+	//   1) Ephemeral remote key (test-only)      -> Web3SignerKeyMaterialB64 from bls.NewSecretKey.
+	//   2) Explicit key material import          -> Web3SignerKeyMaterialB64 from flag.
+	//   3) Persistent remote key (default)       -> Web3SignerKeyMaterialB64 empty, Web3Signer manages keys.
+	if v.GetBool(StakingWeb3SignerEnabledKey) {
+		web3Ephemeral := v.GetBool(StakingWeb3SignerEphemeralKey)
+		web3KeyMaterial := v.GetString(StakingWeb3SignerKeyMaterialB64Key)
+
+		if web3Ephemeral && web3KeyMaterial != "" {
+			return node.StakingConfig{}, errWeb3SignerEphemeralAndKeyMaterial
+		}
+
+		config.Web3SignerEnabled = true
+		config.Web3SignerEphemeral = web3Ephemeral
+
+		switch {
+		case web3Ephemeral:
+			// Test-only mode: intercept the existing ephemeral key logic by
+			// reusing bls.NewSecretKey(), but *only* to generate temporary
+			// key material for Web3Signer. We do not persist this key or
+			// expose it via StakingSigningKey; it is exported solely as
+			// Web3SignerKeyMaterialB64 for Cryftee/Web3Signer to use.
+			ephemeralKey, err := bls.NewSecretKey()
+			if err != nil {
+				return node.StakingConfig{}, fmt.Errorf("couldn't generate ephemeral web3signer key: %w", err)
+			}
+			keyBytes := bls.SecretKeyToBytes(ephemeralKey)
+			config.Web3SignerKeyMaterialB64 = base64.StdEncoding.EncodeToString(keyBytes)
+
+		case web3KeyMaterial != "":
+			// Operator-supplied key material; pass through unchanged.
+			config.Web3SignerKeyMaterialB64 = web3KeyMaterial
+
+		default:
+			// Persistent remote key mode: leave Web3SignerKeyMaterialB64 empty.
+			// Cryftee/Web3Signer will decide how to create/load the key set,
+			// potentially for both TLS and BLS signing.
+		}
 	}
 
 	var err error

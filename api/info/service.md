@@ -693,21 +693,35 @@ curl -X POST --data '{
 Returns a summarized view of local runtime and pin health as reported by the
 configured Cryftee sidecar.
 
-If the sidecar is disabled or unreachable, `runtime` will be omitted and
+If the sidecar is disabled or unreachable, `runtime` will be `null` and
 `error` will describe the failure. No consensus behavior depends on this data.
 
-**Signature**
+**Signature:**
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "info.getRuntimeInfo",
-  "params": {}
+```sh
+info.getRuntimeInfo() -> {
+    runtime: {
+        healthy: bool,
+        epoch: int,
+        pinned: int,
+        missing: int
+    } | null,
+    error: string
 }
 ```
 
-**Response**
+**Example Call:**
+
+```sh
+curl -X POST --data '{
+    "jsonrpc":"2.0",
+    "id"     :1,
+    "method" :"info.getRuntimeInfo",
+    "params" :{}
+}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info
+```
+
+**Example Response (sidecar enabled and healthy):**
 
 ```json
 {
@@ -725,7 +739,20 @@ If the sidecar is disabled or unreachable, `runtime` will be omitted and
 }
 ```
 
-**Notes**
+**Example Response (sidecar disabled or unreachable):**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "runtime": null,
+    "error": "runtime info client not configured"
+  }
+}
+```
+
+**Notes:**
 
 - `healthy` reflects the sidecar's aggregate view of runtime/pin health.
 - `epoch` is the current epoch used when evaluating pin requirements.

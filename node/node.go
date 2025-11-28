@@ -104,175 +104,6 @@ var (
 	errShuttingDown  = errors.New("server shutting down")
 )
 
-// New returns an instance of Node
-func New(
-	config *Config,
-	logFactory logging.Factory,
-	logger logging.Logger,
-) (*Node, error) {
-	tlsCert := config.StakingTLSCert.Leaf
-	stakingCert, err := staking.ParseCertificate(tlsCert.Raw)
-	if err != nil {
-		return nil, fmt.Errorf("invalid staking certificate: %w", err)
-	}
-
-	n := &Node{
-		Log:              logger,
-		LogFactory:       logFactory,
-		StakingTLSSigner: config.StakingTLSCert.PrivateKey.(crypto.Signer),
-		StakingTLSCert:   stakingCert,
-		ID:               ids.NodeIDFromCert(stakingCert),
-		Config:           config,
-	}
-
-	// Configure Cryftee runtime client if enabled.
-	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
-		logger.Info("initializing Cryftee runtime client",
-			zap.String("url", config.RuntimeCryfteeURL),
-			zap.Duration("timeout", config.RuntimeCryfteeTimeout),
-		)
-		n.runtimeClient = NewHTTPRuntimeInfoClient(
-			config.RuntimeCryfteeURL,
-			config.RuntimeCryfteeTimeout,
-		)
-	} else {
-		logger.Info("Cryftee runtime disabled or URL not set",
-			zap.Bool("runtimeCryfteeEnabled", config.RuntimeCryfteeEnabled),
-			zap.String("runtimeCryfteeURL", config.RuntimeCryfteeURL),
-			zap.Duration("runtimeCryfteeTimeout", config.RuntimeCryfteeTimeout),
-		)
-	}
-
-	n.DoneShuttingDown.Add(1)
-
-	pop := signer.NewProofOfPossession(n.Config.StakingSigningKey)
-	logger.Info("initializing node",
-		zap.Stringer("version", version.CurrentApp),
-		zap.Stringer("nodeID", n.ID),
-		zap.Stringer("stakingKeyType", tlsCert.PublicKeyAlgorithm),
-		zap.Reflect("nodePOP", pop),
-		zap.Reflect("providedFlags", n.Config.ProvidedFlags),
-		zap.Reflect("config", n.Config),
-	)
-
-	n.VMFactoryLog, err = logFactory.Make("vm-factory")
-	if err != nil {
-		return nil, fmt.Errorf("problem creating vm logger: %w", err)
-	}
-
-	n.VMAliaser = ids.NewAliaser()
-	for vmID, aliases := range config.VMAliases {
-		for _, alias := range aliases {
-			if err := n.VMAliaser.Alias(vmID, alias); err != nil {
-				return nil, err
-			}
-		}
-	}
-	n.VMManager = vms.NewManager(n.VMFactoryLog, n.VMAliaser)
-
-	if err := n.initBootstrappers(); err != nil { // Configure the bootstrappers
-		return nil, fmt.Errorf("problem initializing node beacons: %w", err)
-	}
-
-	// Set up tracer
-	n.tracer, err = trace.New(n.Config.TraceConfig)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't initialize tracer: %w", err)
-	}
-
-	n.initMetrics()
-	n.initNAT()
-	if err := n.initAPIServer(); err != nil { // Start the API Server
-		return nil, fmt.Errorf("couldn't initialize API server: %w", err)
-	}
-
-	if err := n.initMetricsAPI(); err != nil { // Start the Metrics API
-		return nil, fmt.Errorf("couldn't initialize metrics API: %w", err)
-	}
-
-	if err := n.initDatabase(); err != nil { // Set up the node's database
-		return nil, fmt.Errorf("problem initializing database: %w", err)
-	}
-
-	if err := n.initKeystoreAPI(); err != nil { // Start the Keystore API
-		return nil, fmt.Errorf("couldn't initialize keystore API: %w", err)
-	}
-
-	n.initSharedMemory() // Initialize shared memory
-
-	// message.Creator is shared between networking, chainManager and the engine.
-	// It must be initiated before networking (initNetworking), chain manager (initChainManager)
-	// and the engine (initChains) but after the metrics (initMetricsAPI)
-	// message.Creator currently record metrics under network namespace
-	n.networkNamespace = "network"
-	n.msgCreator, err = message.NewCreator(
-		n.Log,
-		n.MetricsRegisterer,
-		n.networkNamespace,
-		n.Config.NetworkConfig.CompressionType,
-		n.Config.NetworkConfig.MaximumInboundMessageTimeout,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("problem initializing message creator: %w", err)
-	}
-
-	n.vdrs = validators.NewManager()
-	if !n.Config.SybilProtectionEnabled {
-		logger.Warn("sybil control is not enforced")
-		n.vdrs = newOverriddenManager(constants.PrimaryNetworkID, n.vdrs)
-	}
-	if err := n.initResourceManager(n.MetricsRegisterer); err != nil {
-		return nil, fmt.Errorf("problem initializing resource manager: %w", err)
-	}
-	n.initCPUTargeter(&config.CPUTargeterConfig)
-	n.initDiskTargeter(&config.DiskTargeterConfig)
-	if err := n.initNetworking(); err != nil { // Set up networking layer.
-		return nil, fmt.Errorf("problem initializing networking: %w", err)
-	}
-
-	n.initEventDispatchers()
-
-	// Start the Health API
-	// Has to be initialized before chain manager
-	// [n.Net] must already be set
-	if err := n.initHealthAPI(); err != nil {
-		return nil, fmt.Errorf("couldn't initialize health API: %w", err)
-	}
-	if err := n.addDefaultVMAliases(); err != nil {
-		return nil, fmt.Errorf("couldn't initialize API aliases: %w", err)
-	}
-	if err := n.initChainManager(n.Config.CryftAssetID); err != nil { // Set up the chain manager
-		return nil, fmt.Errorf("couldn't initialize chain manager: %w", err)
-	}
-	if err := n.initVMs(); err != nil { // Initialize the VM registry.
-		return nil, fmt.Errorf("couldn't initialize VM registry: %w", err)
-	}
-	if err := n.initAdminAPI(); err != nil { // Start the Admin API
-		return nil, fmt.Errorf("couldn't initialize admin API: %w", err)
-	}
-	if err := n.initInfoAPI(); err != nil { // Start the Info API
-		return nil, fmt.Errorf("couldn't initialize info API: %w", err)
-	}
-	if err := n.initChainAliases(n.Config.GenesisBytes); err != nil {
-		return nil, fmt.Errorf("couldn't initialize chain aliases: %w", err)
-	}
-	if err := n.initAPIAliases(n.Config.GenesisBytes); err != nil {
-		return nil, fmt.Errorf("couldn't initialize API aliases: %w", err)
-	}
-	if err := n.initIndexer(); err != nil {
-		return nil, fmt.Errorf("couldn't initialize indexer: %w", err)
-	}
-
-	n.health.Start(context.TODO(), n.Config.HealthCheckFreq)
-	n.initProfiler()
-
-	// Start the Platform chain
-	if err := n.initChains(n.Config.GenesisBytes); err != nil {
-		return nil, fmt.Errorf("couldn't initialize chains: %w", err)
-	}
-	return n, nil
-}
-
 // Node is an instance of an Avalanche node.
 type Node struct {
 	Log          logging.Logger
@@ -400,6 +231,10 @@ type Node struct {
 
 	// Runtime info / Cryftee client. Nil when disabled or misconfigured.
 	runtimeClient RuntimeInfoClient
+
+	// CryfteeManager handles lifecycle of the cryftee sidecar when managed by cryftgo.
+	// Nil when cryftee is not managed by this node (e.g., external deployment).
+	cryfteeManager *CryfteeManager
 }
 
 /*
@@ -532,7 +367,23 @@ func (n *Node) initNetworking() error {
 		)
 	}
 
-	tlsConfig := peer.TLSConfig(n.Config.StakingTLSCert, n.tlsKeyLogWriterCloser)
+	// Choose TLS config:
+	//   - If a RemoteTLSSigner is provided and Web3Signer is enabled, use it.
+	//   - Otherwise, fall back to the local staking TLS certificate.
+	var tlsConfig *tls.Config
+	if n.Config.Web3SignerEnabled && n.Config.RemoteTLSSigner != nil {
+		n.Log.Info("using remote TLS signer for staking transport (Cryftee/Web3Signer-backed)")
+		cfg, err := n.Config.RemoteTLSSigner.TLSConfig()
+		if err != nil {
+			return fmt.Errorf("failed to initialize remote TLS signer: %w", err)
+		}
+		tlsConfig = cfg
+		// In this mode, tlsKey will typically also be backed by Web3Signer
+		// via the tls.Config's certificate/private key; keep TLSKey set
+		// for now so downstream code doesn't change.
+	} else {
+		tlsConfig = peer.TLSConfig(n.Config.StakingTLSCert, n.tlsKeyLogWriterCloser)
+	}
 
 	// Create chain router
 	n.chainRouter = &router.ChainRouter{}
@@ -615,7 +466,19 @@ func (n *Node) initNetworking() error {
 	n.Config.NetworkConfig.Beacons = n.bootstrappers
 	n.Config.NetworkConfig.TLSConfig = tlsConfig
 	n.Config.NetworkConfig.TLSKey = tlsKey
-	n.Config.NetworkConfig.BLSKey = n.Config.StakingSigningKey
+
+	// When Web3Signer / Cryftee-backed staking is enabled, BLS staking
+	// signatures are expected to be produced by the external signer. In that
+	// mode we intentionally do not wire a local BLS key into the networking
+	// config to avoid accidental local signing. A future Cryftee/Web3Signer
+	// client can instead attach a remote-signer-backed BLS provider here.
+	if n.Config.Web3SignerEnabled {
+		n.Log.Info("web3signer-backed staking is enabled; skipping wiring of local BLS staking key into network config")
+		n.Config.NetworkConfig.BLSKey = nil
+	} else {
+		n.Config.NetworkConfig.BLSKey = n.Config.StakingSigningKey
+	}
+
 	n.Config.NetworkConfig.TrackedSubnets = n.Config.TrackedSubnets
 	n.Config.NetworkConfig.UptimeCalculator = n.uptimeCalculator
 	n.Config.NetworkConfig.UptimeRequirement = n.Config.UptimeRequirement
@@ -636,199 +499,11 @@ func (n *Node) initNetworking() error {
 	return err
 }
 
-type NodeProcessContext struct {
-	// The process id of the node
-	PID int `json:"pid"`
-	// URI to access the node API
-	// Format: [https|http]://[host]:[port]
-	URI string `json:"uri"`
-	// Address other nodes can use to communicate with this node
-	// Format: [host]:[port]
-	StakingAddress string `json:"stakingAddress"`
-}
-
-// Write process context to the configured path. Supports the use of
-// dynamically chosen network ports with local network orchestration.
-func (n *Node) writeProcessContext() error {
-	n.Log.Info("writing process context", zap.String("path", n.Config.ProcessContextFilePath))
-
-	// Write the process context to disk
-	processContext := &NodeProcessContext{
-		PID:            os.Getpid(),
-		URI:            n.apiURI,
-		StakingAddress: n.stakingAddress, // Set by network initialization
-	}
-	bytes, err := json.MarshalIndent(processContext, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal process context: %w", err)
-	}
-	if err := perms.WriteFile(n.Config.ProcessContextFilePath, bytes, perms.ReadWrite); err != nil {
-		return fmt.Errorf("failed to write process context: %w", err)
-	}
-	return nil
-}
-
-// Dispatch starts the node's servers.
-// Returns when the node exits.
-func (n *Node) Dispatch() error {
-	if err := n.writeProcessContext(); err != nil {
-		return err
-	}
-
-	// Start the HTTP API server
-	go n.Log.RecoverAndPanic(func() {
-		n.Log.Info("API server listening",
-			zap.String("uri", n.apiURI),
-		)
-		err := n.APIServer.Dispatch()
-		// When [n].Shutdown() is called, [n.APIServer].Close() is called.
-		// This causes [n.APIServer].Dispatch() to return an error.
-		// If that happened, don't log/return an error here.
-		if !n.shuttingDown.Get() {
-			n.Log.Fatal("API server dispatch failed",
-				zap.Error(err),
-			)
-		}
-		// If the API server isn't running, shut down the node.
-		// If node is already shutting down, this does nothing.
-		n.Shutdown(1)
-	})
-
-	// Add state sync nodes to the peer network
-	for i, peerIP := range n.Config.StateSyncIPs {
-		n.Net.ManuallyTrack(n.Config.StateSyncIDs[i], peerIP)
-	}
-
-	// Add bootstrap nodes to the peer network
-	for _, bootstrapper := range n.Config.Bootstrappers {
-		n.Net.ManuallyTrack(bootstrapper.ID, ips.IPPort(bootstrapper.IP))
-	}
-
-	// Start P2P connections
-	err := n.Net.Dispatch()
-
-	// If the P2P server isn't running, shut down the node.
-	// If node is already shutting down, this does nothing.
-	n.Shutdown(1)
-
-	if n.tlsKeyLogWriterCloser != nil {
-		err := n.tlsKeyLogWriterCloser.Close()
-		if err != nil {
-			n.Log.Error("closing TLS key log file failed",
-				zap.String("filename", n.Config.NetworkConfig.TLSKeyLogFile),
-				zap.Error(err),
-			)
-		}
-	}
-
-	// Wait until the node is done shutting down before returning
-	n.DoneShuttingDown.Wait()
-
-	// Remove the process context file to communicate to an orchestrator
-	// that the node is no longer running.
-	if err := os.Remove(n.Config.ProcessContextFilePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		n.Log.Error("removal of process context file failed",
-			zap.String("path", n.Config.ProcessContextFilePath),
-			zap.Error(err),
-		)
-	}
-
-	return err
-}
-
 /*
  ******************************************************************************
  *********************** End P2P Networking Section ***************************
  ******************************************************************************
  */
-
-func (n *Node) initDatabase() error {
-	// start the db
-	switch n.Config.DatabaseConfig.Name {
-	case leveldb.Name:
-		// Prior to v1.10.15, the only on-disk database was leveldb, and its
-		// files went to [dbPath]/[networkID]/v1.4.5.
-		dbPath := filepath.Join(n.Config.DatabaseConfig.Path, version.CurrentDatabase.String())
-		var err error
-		n.DB, err = leveldb.New(dbPath, n.Config.DatabaseConfig.Config, n.Log, "db_internal", n.MetricsRegisterer)
-		if err != nil {
-			return fmt.Errorf("couldn't create leveldb at %s: %w", dbPath, err)
-		}
-	case memdb.Name:
-		n.DB = memdb.New()
-	case pebble.Name:
-		dbPath := filepath.Join(n.Config.DatabaseConfig.Path, pebble.Name)
-		var err error
-		n.DB, err = pebble.New(dbPath, n.Config.DatabaseConfig.Config, n.Log, "db_internal", n.MetricsRegisterer)
-		if err != nil {
-			return fmt.Errorf("couldn't create pebbledb at %s: %w", dbPath, err)
-		}
-	default:
-		return fmt.Errorf(
-			"db-type was %q but should have been one of {%s, %s, %s}",
-			n.Config.DatabaseConfig.Name,
-			leveldb.Name,
-			memdb.Name,
-			pebble.Name,
-		)
-	}
-
-	if n.Config.ReadOnly && n.Config.DatabaseConfig.Name != memdb.Name {
-		n.DB = versiondb.New(n.DB)
-	}
-
-	var err error
-	n.DB, err = meterdb.New("db", n.MetricsRegisterer, n.DB)
-	if err != nil {
-		return err
-	}
-
-	rawExpectedGenesisHash := hashing.ComputeHash256(n.Config.GenesisBytes)
-
-	rawGenesisHash, err := n.DB.Get(genesisHashKey)
-	if err == database.ErrNotFound {
-		rawGenesisHash = rawExpectedGenesisHash
-		err = n.DB.Put(genesisHashKey, rawGenesisHash)
-	}
-	if err != nil {
-		return err
-	}
-
-	genesisHash, err := ids.ToID(rawGenesisHash)
-	if err != nil {
-		return err
-	}
-	expectedGenesisHash, err := ids.ToID(rawExpectedGenesisHash)
-	if err != nil {
-		return err
-	}
-
-	if genesisHash != expectedGenesisHash {
-		return fmt.Errorf("db contains invalid genesis hash. DB Genesis: %s Generated Genesis: %s", genesisHash, expectedGenesisHash)
-	}
-
-	n.Log.Info("initializing database",
-		zap.Stringer("genesisHash", genesisHash),
-	)
-
-	ok, err := n.DB.Has(ungracefulShutdown)
-	if err != nil {
-		return fmt.Errorf("failed to read ungraceful shutdown key: %w", err)
-	}
-
-	if ok {
-		n.Log.Warn("detected previous ungraceful shutdown")
-	}
-
-	if err := n.DB.Put(ungracefulShutdown, nil); err != nil {
-		return fmt.Errorf(
-			"failed to write ungraceful shutdown key at: %w",
-			err,
-		)
-	}
-
-	return nil
-}
 
 // Set the node IDs of the peers this node should first connect to
 func (n *Node) initBootstrappers() error {
@@ -1559,6 +1234,336 @@ func (n *Node) initDiskTargeter(
 	)
 }
 
+// New returns an instance of Node
+func New(
+	config *Config,
+	logFactory logging.Factory,
+	logger logging.Logger,
+) (*Node, error) {
+	tlsCert := config.StakingTLSCert.Leaf
+	stakingCert, err := staking.ParseCertificate(tlsCert.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid staking certificate: %w", err)
+	}
+
+	n := &Node{
+		Log:              logger,
+		LogFactory:       logFactory,
+		StakingTLSSigner: config.StakingTLSCert.PrivateKey.(crypto.Signer),
+		StakingTLSCert:   stakingCert,
+		ID:               ids.NodeIDFromCert(stakingCert),
+		Config:           config,
+	}
+
+	// Configure Cryftee runtime client if enabled.
+	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
+		logger.Info("initializing Cryftee runtime client",
+			zap.String("url", config.RuntimeCryfteeURL),
+			zap.Duration("timeout", config.RuntimeCryfteeTimeout),
+		)
+		n.runtimeClient = NewHTTPRuntimeInfoClient(
+			config.RuntimeCryfteeURL,
+			config.RuntimeCryfteeTimeout,
+		)
+	} else {
+		logger.Info("Cryftee runtime disabled or URL not set",
+			zap.Bool("runtimeCryfteeEnabled", config.RuntimeCryfteeEnabled),
+			zap.String("runtimeCryfteeURL", config.RuntimeCryfteeURL),
+			zap.Duration("runtimeCryfteeTimeout", config.RuntimeCryfteeTimeout),
+		)
+	}
+
+	// Initialize and start managed cryftee sidecar if configured
+	if config.CryfteeBinaryPath != "" {
+		cryfteeConfig := CryfteeManagerConfig{
+			BinaryPath:               config.CryfteeBinaryPath,
+			HTTPAddr:                 extractHostPort(config.RuntimeCryfteeURL),
+			StartupTimeout:           config.CryfteeStartupTimeout,
+			ExpectedHashes:           config.CryfteeExpectedHashes,
+			Web3SignerEnabled:        config.Web3SignerEnabled,
+			Web3SignerEphemeral:      config.Web3SignerEphemeral,
+			Web3SignerKeyMaterialB64: config.Web3SignerKeyMaterialB64,
+		}
+
+		n.cryfteeManager = NewCryfteeManager(cryfteeConfig, logger)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := n.cryfteeManager.Start(ctx); err != nil {
+			return nil, fmt.Errorf("failed to start cryftee sidecar: %w", err)
+		}
+
+		logger.Info("cryftee sidecar started and attestation verified",
+			zap.String("verifiedHash", n.cryfteeManager.VerifiedHash()),
+		)
+	}
+
+	n.DoneShuttingDown.Add(1)
+
+	// In local-signing mode, we can construct and log a proof of possession
+	// derived from the in-process BLS signing key. When Web3Signer / Cryftee-
+	// backed staking is enabled, the BLS key and POP are owned by the remote
+	// signer. In that case we avoid constructing a POP here; a future Cryftee
+	// client can surface the POP via runtime info APIs instead.
+	var pop *signer.ProofOfPossession
+	if n.Config.StakingSigningKey != nil {
+		pop = signer.NewProofOfPossession(n.Config.StakingSigningKey)
+	} else if n.Config.Web3SignerEnabled {
+		logger.Info("web3signer-backed staking is enabled; local BLS staking key/POP are managed externally via Cryftee/Web3Signer")
+	}
+
+	logger.Info("initializing node",
+		zap.Stringer("version", version.CurrentApp),
+		zap.Stringer("nodeID", n.ID),
+		zap.Stringer("stakingKeyType", tlsCert.PublicKeyAlgorithm),
+		zap.Reflect("nodePOP", pop),
+		zap.Reflect("providedFlags", n.Config.ProvidedFlags),
+		zap.Reflect("config", n.Config),
+	)
+
+	n.VMFactoryLog, err = logFactory.Make("vm-factory")
+	if err != nil {
+		return nil, fmt.Errorf("problem creating vm logger: %w", err)
+	}
+
+	n.VMAliaser = ids.NewAliaser()
+	for vmID, aliases := range config.VMAliases {
+		for _, alias := range aliases {
+			if err := n.VMAliaser.Alias(vmID, alias); err != nil {
+				return nil, err
+			}
+		}
+	}
+	n.VMManager = vms.NewManager(n.VMFactoryLog, n.VMAliaser)
+
+	if err := n.initBootstrappers(); err != nil { // Configure the bootstrappers
+		return nil, fmt.Errorf("problem initializing node beacons: %w", err)
+	}
+
+	// Set up tracer
+	n.tracer, err = trace.New(n.Config.TraceConfig)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't initialize tracer: %w", err)
+	}
+
+	n.initMetrics()
+	n.initNAT()
+	if err := n.initAPIServer(); err != nil { // Start the API Server
+		return nil, fmt.Errorf("couldn't initialize API server: %w", err)
+	}
+
+	if err := n.initMetricsAPI(); err != nil { // Start the Metrics API
+		return nil, fmt.Errorf("couldn't initialize metrics API: %w", err)
+	}
+
+	if err := n.initDatabase(); err != nil { // Set up the node's database
+		return nil, fmt.Errorf("problem initializing database: %w", err)
+	}
+
+	if err := n.initKeystoreAPI(); err != nil { // Start the Keystore API
+		return nil, fmt.Errorf("couldn't initialize keystore API: %w", err)
+	}
+
+	n.initSharedMemory() // Initialize shared memory
+
+	// message.Creator is shared between networking, chainManager and the engine.
+	// It must be initiated before networking (initNetworking), chain manager (initChainManager)
+	// and the engine (initChains) but after the metrics (initMetricsAPI)
+	// message.Creator currently record metrics under network namespace
+	n.networkNamespace = "network"
+	n.msgCreator, err = message.NewCreator(
+		n.Log,
+		n.MetricsRegisterer,
+		n.networkNamespace,
+		n.Config.NetworkConfig.CompressionType,
+		n.Config.NetworkConfig.MaximumInboundMessageTimeout,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("problem initializing message creator: %w", err)
+	}
+
+	n.vdrs = validators.NewManager()
+	if !n.Config.SybilProtectionEnabled {
+		logger.Warn("sybil control is not enforced")
+		n.vdrs = newOverriddenManager(constants.PrimaryNetworkID, n.vdrs)
+	}
+	if err := n.initResourceManager(n.MetricsRegisterer); err != nil {
+		return nil, fmt.Errorf("problem initializing resource manager: %w", err)
+	}
+	n.initCPUTargeter(&config.CPUTargeterConfig)
+	n.initDiskTargeter(&config.DiskTargeterConfig)
+	if err := n.initNetworking(); err != nil { // Set up networking layer.
+		return nil, fmt.Errorf("problem initializing networking: %w", err)
+	}
+
+	n.initEventDispatchers()
+
+	// Start the Health API
+	// Has to be initialized before chain manager
+	// [n.Net] must already be set
+	if err := n.initHealthAPI(); err != nil {
+		return nil, fmt.Errorf("couldn't initialize health API: %w", err)
+	}
+	if err := n.addDefaultVMAliases(); err != nil {
+		return nil, fmt.Errorf("couldn't initialize API aliases: %w", err)
+	}
+	if err := n.initChainManager(n.Config.CryftAssetID); err != nil { // Set up the chain manager
+		return nil, fmt.Errorf("couldn't initialize chain manager: %w", err)
+	}
+	if err := n.initVMs(); err != nil { // Initialize the VM registry.
+		return nil, fmt.Errorf("couldn't initialize VM registry: %w", err)
+	}
+	if err := n.initAdminAPI(); err != nil { // Start the Admin API
+		return nil, fmt.Errorf("couldn't initialize admin API: %w", err)
+	}
+	if err := n.initInfoAPI(); err != nil { // Start the Info API
+		return nil, fmt.Errorf("couldn't initialize info API: %w", err)
+	}
+	if err := n.initChainAliases(n.Config.GenesisBytes); err != nil {
+		return nil, fmt.Errorf("couldn't initialize chain aliases: %w", err)
+	}
+	if err := n.initAPIAliases(n.Config.GenesisBytes); err != nil {
+		return nil, fmt.Errorf("couldn't initialize API aliases: %w", err)
+	}
+	if err := n.initIndexer(); err != nil {
+		return nil, fmt.Errorf("couldn't initialize indexer: %w", err)
+	}
+
+	n.health.Start(context.TODO(), n.Config.HealthCheckFreq)
+	n.initProfiler()
+
+	// Start the Platform chain
+	if err := n.initChains(n.Config.GenesisBytes); err != nil {
+		return nil, fmt.Errorf("couldn't initialize chains: %w", err)
+	}
+	return n, nil
+}
+
+// extractHostPort extracts host:port from a URL string.
+// Returns empty string if URL is invalid.
+func extractHostPort(urlStr string) string {
+	if urlStr == "" {
+		return ""
+	}
+	// Simple extraction - assumes format http://host:port or https://host:port
+	// For production, use net/url.Parse
+	if len(urlStr) > 7 && urlStr[:7] == "http://" {
+		return urlStr[7:]
+	}
+	if len(urlStr) > 8 && urlStr[:8] == "https://" {
+		return urlStr[8:]
+	}
+	return urlStr
+}
+
+// NodeProcessContext is used to store information about the node's process
+type NodeProcessContext struct {
+	// The process id of the node
+	PID int `json:"pid"`
+	// URI to access the node API
+	// Format: [https|http]://[host]:[port]
+	URI string `json:"uri"`
+	// Address other nodes can use to communicate with this node
+	// Format: [host]:[port]
+	StakingAddress string `json:"stakingAddress"`
+}
+
+// Write process context to the configured path. Supports the use of
+// dynamically chosen network ports with local network orchestration.
+func (n *Node) writeProcessContext() error {
+	n.Log.Info("writing process context", zap.String("path", n.Config.ProcessContextFilePath))
+
+	// Write the process context to disk
+	processContext := &NodeProcessContext{
+		PID:            os.Getpid(),
+		URI:            n.apiURI,
+		StakingAddress: n.stakingAddress, // Set by network initialization
+	}
+	bytes, err := json.MarshalIndent(processContext, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal process context: %w", err)
+	}
+	if err := perms.WriteFile(n.Config.ProcessContextFilePath, bytes, perms.ReadWrite); err != nil {
+		return fmt.Errorf("failed to write process context: %w", err)
+	}
+	return nil
+}
+
+// Dispatch starts the node's servers.
+// Returns when the node exits.
+func (n *Node) Dispatch() error {
+	if err := n.writeProcessContext(); err != nil {
+		return err
+	}
+
+	// Start the HTTP API server
+	go n.Log.RecoverAndPanic(func() {
+		n.Log.Info("API server listening",
+			zap.String("uri", n.apiURI),
+		)
+		err := n.APIServer.Dispatch()
+		// When [n].Shutdown() is called, [n.APIServer].Close() is called.
+		// This causes [n.APIServer].Dispatch() to return an error.
+		// If that happened, don't log/return an error here.
+		if !n.shuttingDown.Get() {
+			n.Log.Fatal("API server dispatch failed",
+				zap.Error(err),
+			)
+		}
+		// If the API server isn't running, shut down the node.
+		// If node is already shutting down, this does nothing.
+		n.Shutdown(1)
+	})
+
+	// Add state sync nodes to the peer network
+	for i, peerIP := range n.Config.StateSyncIPs {
+		n.Net.ManuallyTrack(n.Config.StateSyncIDs[i], peerIP)
+	}
+
+	// Add bootstrap nodes to the peer network
+	for _, bootstrapper := range n.Config.Bootstrappers {
+		n.Net.ManuallyTrack(bootstrapper.ID, ips.IPPort(bootstrapper.IP))
+	}
+
+	// Start P2P connections
+	err := n.Net.Dispatch()
+
+	// If the P2P server isn't running, shut down the node.
+	// If node is already shutting down, this does nothing.
+	n.Shutdown(1)
+
+	if n.tlsKeyLogWriterCloser != nil {
+		err := n.tlsKeyLogWriterCloser.Close()
+		if err != nil {
+			n.Log.Error("closing TLS key log file failed",
+				zap.String("filename", n.Config.NetworkConfig.TLSKeyLogFile),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// Wait until the node is done shutting down before returning
+	n.DoneShuttingDown.Wait()
+
+	// Remove the process context file to communicate to an orchestrator
+	// that the node is no longer running.
+	if err := os.Remove(n.Config.ProcessContextFilePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		n.Log.Error("removal of process context file failed",
+			zap.String("path", n.Config.ProcessContextFilePath),
+			zap.Error(err),
+		)
+	}
+
+	return err
+}
+
+/*
+ ******************************************************************************
+ *********************** End P2P Networking Section ***************************
+ ******************************************************************************
+ */
+
 // Shutdown this node
 // May be called multiple times
 func (n *Node) Shutdown(exitCode int) {
@@ -1595,7 +1600,9 @@ func (n *Node) shutdown() {
 	if n.resourceManager != nil {
 		n.resourceManager.Shutdown()
 	}
-	n.timeoutManager.Stop()
+	if n.timeoutManager != nil {
+		n.timeoutManager.Stop()
+	}
 	if n.chainManager != nil {
 		n.chainManager.Shutdown()
 	}
@@ -1605,22 +1612,41 @@ func (n *Node) shutdown() {
 	if n.Net != nil {
 		n.Net.StartClose()
 	}
-	if err := n.APIServer.Shutdown(); err != nil {
-		n.Log.Debug("error during API shutdown",
-			zap.Error(err),
-		)
+	if n.APIServer != nil {
+		if err := n.APIServer.Shutdown(); err != nil {
+			n.Log.Debug("error during API shutdown",
+				zap.Error(err),
+			)
+		}
 	}
-	n.portMapper.UnmapAllPorts()
-	n.ipUpdater.Stop()
-	if err := n.indexer.Close(); err != nil {
-		n.Log.Debug("error closing tx indexer",
-			zap.Error(err),
-		)
+	if n.portMapper != nil {
+		n.portMapper.UnmapAllPorts()
+	}
+	if n.ipUpdater != nil {
+		n.ipUpdater.Stop()
+	}
+	if n.indexer != nil {
+		if err := n.indexer.Close(); err != nil {
+			n.Log.Debug("error closing tx indexer",
+				zap.Error(err),
+			)
+		}
 	}
 
 	// Ensure all runtimes are shutdown
-	n.Log.Info("cleaning up plugin runtimes")
-	n.runtimeManager.Stop(context.TODO())
+	if n.runtimeManager != nil {
+		n.Log.Info("cleaning up plugin runtimes")
+		n.runtimeManager.Stop(context.TODO())
+	}
+
+	// Stop managed cryftee sidecar if running
+	if n.cryfteeManager != nil {
+		if err := n.cryfteeManager.Stop(); err != nil {
+			n.Log.Warn("error stopping cryftee sidecar",
+				zap.Error(err),
+			)
+		}
+	}
 
 	if n.DB != nil {
 		if err := n.DB.Delete(ungracefulShutdown); err != nil {
@@ -1641,10 +1667,12 @@ func (n *Node) shutdown() {
 		n.Log.Info("shutting down tracing")
 	}
 
-	if err := n.tracer.Close(); err != nil {
-		n.Log.Warn("error during tracer shutdown",
-			zap.Error(err),
-		)
+	if n.tracer != nil {
+		if err := n.tracer.Close(); err != nil {
+			n.Log.Warn("error during tracer shutdown",
+				zap.Error(err),
+			)
+		}
 	}
 
 	n.DoneShuttingDown.Done()
@@ -1662,4 +1690,95 @@ func (n *Node) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, er
 		return nil, errors.New("runtime info client not configured")
 	}
 	return n.runtimeClient.GetRuntimeInfo(ctx)
+}
+
+// Add this function somewhere after initEventDispatchers and before initIndexer
+// (around line 540 based on current structure)
+
+func (n *Node) initDatabase() error {
+	// start the db
+	switch n.Config.DatabaseConfig.Name {
+	case leveldb.Name:
+		// Prior to v1.10.15, the only on-disk database was leveldb, and its
+		// files went to [dbPath]/[networkID]/v1.4.5.
+		dbPath := filepath.Join(n.Config.DatabaseConfig.Path, version.CurrentDatabase.String())
+		var err error
+		n.DB, err = leveldb.New(dbPath, n.Config.DatabaseConfig.Config, n.Log, "db_internal", n.MetricsRegisterer)
+		if err != nil {
+			return fmt.Errorf("couldn't create leveldb at %s: %w", dbPath, err)
+		}
+	case memdb.Name:
+		n.DB = memdb.New()
+	case pebble.Name:
+		dbPath := filepath.Join(n.Config.DatabaseConfig.Path, pebble.Name)
+		var err error
+		n.DB, err = pebble.New(dbPath, n.Config.DatabaseConfig.Config, n.Log, "db_internal", n.MetricsRegisterer)
+		if err != nil {
+			return fmt.Errorf("couldn't create pebbledb at %s: %w", dbPath, err)
+		}
+	default:
+		return fmt.Errorf(
+			"db-type was %q but should have been one of {%s, %s, %s}",
+			n.Config.DatabaseConfig.Name,
+			leveldb.Name,
+			memdb.Name,
+			pebble.Name,
+		)
+	}
+
+	if n.Config.ReadOnly && n.Config.DatabaseConfig.Name != memdb.Name {
+		n.DB = versiondb.New(n.DB)
+	}
+
+	var err error
+	n.DB, err = meterdb.New("db", n.MetricsRegisterer, n.DB)
+	if err != nil {
+		return err
+	}
+
+	rawExpectedGenesisHash := hashing.ComputeHash256(n.Config.GenesisBytes)
+
+	rawGenesisHash, err := n.DB.Get(genesisHashKey)
+	if err == database.ErrNotFound {
+		rawGenesisHash = rawExpectedGenesisHash
+		err = n.DB.Put(genesisHashKey, rawGenesisHash)
+	}
+	if err != nil {
+		return err
+	}
+
+	genesisHash, err := ids.ToID(rawGenesisHash)
+	if err != nil {
+		return err
+	}
+	expectedGenesisHash, err := ids.ToID(rawExpectedGenesisHash)
+	if err != nil {
+		return err
+	}
+
+	if genesisHash != expectedGenesisHash {
+		return fmt.Errorf("db contains invalid genesis hash. DB Genesis: %s Generated Genesis: %s", genesisHash, expectedGenesisHash)
+	}
+
+	n.Log.Info("initializing database",
+		zap.Stringer("genesisHash", genesisHash),
+	)
+
+	ok, err := n.DB.Has(ungracefulShutdown)
+	if err != nil {
+		return fmt.Errorf("failed to read ungraceful shutdown key: %w", err)
+	}
+
+	if ok {
+		n.Log.Warn("detected previous ungraceful shutdown")
+	}
+
+	if err := n.DB.Put(ungracefulShutdown, nil); err != nil {
+		return fmt.Errorf(
+			"failed to write ungraceful shutdown key at: %w",
+			err,
+		)
+	}
+
+	return nil
 }

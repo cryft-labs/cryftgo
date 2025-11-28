@@ -200,7 +200,19 @@ const (
 	TracingExporterTypeKey                             = "tracing-exporter-type"
 	TracingHeadersKey                                  = "tracing-headers"
 	ProcessContextFileKey                              = "process-context-file"
-	RuntimeCryfteeURLKey     = "runtime-cryftee-url"
-	RuntimeCryfteeTimeoutKey = "runtime-cryftee-timeout"
-	RuntimeCryfteeEnabledKey = "runtime-cryftee-enabled"
+	RuntimeCryfteeURLKey                               = "runtime-cryftee-url"
+	RuntimeCryfteeTimeoutKey                           = "runtime-cryftee-timeout"
+	RuntimeCryfteeEnabledKey                           = "runtime-cryftee-enabled"
+
+	// Cryftee binary management and attestation
+	CryfteeBinaryPathKey     = "cryftee-binary-path"
+	CryfteeExpectedHashesKey = "cryftee-expected-hashes"
+	CryfteeStartupTimeoutKey = "cryftee-startup-timeout"
+
+	// Web3Signer / Cryftee-backed staking BLS signing configuration.
+	// When enabled, the node is expected to delegate staking signatures to
+	// Cryftee, which in turn may use Web3Signer or other key management.
+	StakingWeb3SignerEnabledKey        = "staking-web3signer-enabled"
+	StakingWeb3SignerEphemeralKey      = "staking-web3signer-ephemeral"
+	StakingWeb3SignerKeyMaterialB64Key = "staking-web3signer-key-material"
 )

@@ -27,10 +27,9 @@ import (
 )
 
 const (
-	DefaultHTTPPort    = 9650
-	DefaultStakingPort = 9651
-
-	CryftGoDataDirVar    = "CRYFTGO_DATA_DIR"
+	DefaultHTTPPort          = 9650
+	DefaultStakingPort       = 9651
+	CryftGoDataDirVar        = "CRYFTGO_DATA_DIR"
 	defaultUnexpandedDataDir = "$" + CryftGoDataDirVar
 
 	DefaultProcessContextFilename = "process.json"
@@ -248,9 +247,27 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.Bool(StakingEphemeralSignerEnabledKey, false, "If true, the node uses an ephemeral staking signer key")
 	fs.String(StakingSignerKeyPathKey, defaultStakingSignerKeyPath, fmt.Sprintf("Path to the signer private key for staking. Ignored if %s is specified", StakingSignerKeyContentKey))
 	fs.String(StakingSignerKeyContentKey, "", "Specifies base64 encoded signer private key for staking")
+
+	// Runtime / Cryftee sidecar
+	fs.String(RuntimeCryfteeURLKey, "", "URL of the Cryftee runtime sidecar (e.g., http://127.0.0.1:8765)")
+	fs.Duration(RuntimeCryfteeTimeoutKey, 5*time.Second, "HTTP timeout for Cryftee runtime calls")
+	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable Cryftee runtime integration")
+
+	// Cryftee binary management and attestation
+	fs.String(CryfteeBinaryPathKey, "", "Path to the Cryftee binary for managed startup")
+	fs.StringSlice(CryfteeExpectedHashesKey, nil, "Expected SHA256 hashes of trusted Cryftee binaries (hex-encoded)")
+	fs.Duration(CryfteeStartupTimeoutKey, 30*time.Second, "Timeout for Cryftee binary startup and health check")
+
+	// Web3Signer / Cryftee-backed staking
+	fs.Bool(StakingWeb3SignerEnabledKey, false, "Delegate staking BLS/TLS signing to Cryftee/Web3Signer")
+	fs.Bool(StakingWeb3SignerEphemeralKey, false, "Use ephemeral key material for Web3Signer (test mode)")
+	fs.String(StakingWeb3SignerKeyMaterialB64Key, "", "Base64-encoded BLS secret key material for Web3Signer import")
+
+	// Sybil Protection
 	fs.Bool(SybilProtectionEnabledKey, true, "Enables sybil protection. If enabled, Network TLS is required")
 	fs.Uint64(SybilProtectionDisabledWeightKey, 100, "Weight to provide to each peer when sybil protection is disabled")
 	fs.Bool(PartialSyncPrimaryNetworkKey, false, "Only sync the P-chain on the Primary Network. If the node is a Primary Network validator, it will report unhealthy")
+
 	// Uptime Requirement
 	fs.Float64(UptimeRequirementKey, genesis.LocalParams.UptimeRequirement, "Fraction of time a validator must be online to receive rewards")
 	// Minimum Stake required to validate the Primary Network
@@ -279,7 +296,7 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	// Bootstrapping
 	// TODO: combine "BootstrapIPsKey" and "BootstrapIDsKey" into one flag
 	fs.String(BootstrapIPsKey, "", "Comma separated list of bootstrap peer ips to connect to. Example: 127.0.0.1:9630,127.0.0.1:9631")
-	fs.String(BootstrapIDsKey, "", "Comma separated list of bootstrap peer ids to connect to. Example: NodeID-JR4dVmy6ffUGAKCBDkyCbeZbyHQBeDsET,NodeID-8CrVPQZ4VSqgL8zTdvL14G8HqAfrBr4z")
+	fs.String(BootstrapIDsKey, "", "Comma separated list of bootstrap peer ids to connect to. Example: NodeID-JR4dVmy6ffUGAKCBDkyCbeZbyHQBeDsET,NodeID-8CrVPQZ4VSqgL8HqAfrBr4z")
 	fs.Duration(BootstrapBeaconConnectionTimeoutKey, time.Minute, "Timeout before emitting a warn log when connecting to bootstrapping beacons")
 	fs.Duration(BootstrapMaxTimeGetAncestorsKey, 50*time.Millisecond, "Max Time to spend fetching a container and its ancestors when responding to a GetAncestors")
 	fs.Uint(BootstrapAncestorsMaxContainersSentKey, 2000, "Max number of containers in an Ancestors message sent by this node")
@@ -359,11 +376,6 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.Bool(TracingInsecureKey, true, "If true, don't use TLS when sending trace data")
 	fs.Float64(TracingSampleRateKey, 0.1, "The fraction of traces to sample. If >= 1, always sample. If <= 0, never sample")
 	fs.StringToString(TracingHeadersKey, map[string]string{}, "The headers to provide the trace indexer")
-
-	// Runtime / Cryftee
-	fs.String(RuntimeCryfteeURLKey, "", "Base URL for the Cryftee runtime sidecar (e.g. http://127.0.0.1:9099)")
-	fs.Duration(RuntimeCryfteeTimeoutKey, 5*time.Second, "HTTP timeout when querying Cryftee runtime sidecar")
-	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable integration with Cryftee runtime sidecar")
 
 	fs.String(ProcessContextFileKey, defaultProcessContextPath, "The path to write process context to (including PID, API URI, and staking address).")
 }
