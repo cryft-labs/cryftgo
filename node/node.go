@@ -1255,27 +1255,14 @@ func New(
 		Config:           config,
 	}
 
-	// Configure Cryftee runtime client if enabled.
-	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
-		logger.Info("initializing Cryftee runtime client",
-			zap.String("url", config.RuntimeCryfteeURL),
-			zap.Duration("timeout", config.RuntimeCryfteeTimeout),
-		)
-		n.runtimeClient = NewHTTPRuntimeInfoClient(
-			config.RuntimeCryfteeURL,
-			config.RuntimeCryfteeTimeout,
-		)
-	} else {
-		logger.Info("Cryftee runtime disabled or URL not set",
-			zap.Bool("runtimeCryfteeEnabled", config.RuntimeCryfteeEnabled),
-			zap.String("runtimeCryfteeURL", config.RuntimeCryfteeURL),
-			zap.Duration("runtimeCryfteeTimeout", config.RuntimeCryfteeTimeout),
-		)
-	}
+	// Cryftee manager - only if binary path is provided AND Web3Signer is enabled
+	if config.Web3SignerEnabled {
+		if config.CryfteeBinaryPath == "" {
+			return nil, fmt.Errorf("--staking-web3signer-enabled requires --cryftee-binary-path to be set")
+		}
 
-	// Initialize and start managed cryftee sidecar if configured
-	if config.CryfteeBinaryPath != "" {
-		cryfteeConfig := CryfteeManagerConfig{
+		// Start managed cryftee sidecar
+		n.cryfteeManager = NewCryfteeManager(CryfteeManagerConfig{
 			BinaryPath:               config.CryfteeBinaryPath,
 			HTTPAddr:                 extractHostPort(config.RuntimeCryfteeURL),
 			StartupTimeout:           config.CryfteeStartupTimeout,
@@ -1283,9 +1270,7 @@ func New(
 			Web3SignerEnabled:        config.Web3SignerEnabled,
 			Web3SignerEphemeral:      config.Web3SignerEphemeral,
 			Web3SignerKeyMaterialB64: config.Web3SignerKeyMaterialB64,
-		}
-
-		n.cryfteeManager = NewCryfteeManager(cryfteeConfig, logger)
+		}, logger)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -1296,6 +1281,67 @@ func New(
 
 		logger.Info("cryftee sidecar started and attestation verified",
 			zap.String("verifiedHash", n.cryfteeManager.VerifiedHash()),
+		)
+
+		// Verify Web3Signer is connected and ready
+		status, err := n.cryfteeManager.VerifySignerReady(ctx)
+		if err != nil {
+			_ = n.cryfteeManager.Stop()
+			return nil, fmt.Errorf("Web3Signer not ready: %w", err)
+		}
+
+		// Initialize keys - cryftgo decides when to generate based on status
+		blsKeyInfo, tlsKeyInfo, err := n.cryfteeManager.InitKeys(ctx, status)
+		if err != nil {
+			_ = n.cryfteeManager.Stop()
+			return nil, fmt.Errorf("key initialization failed: %w", err)
+		}
+
+		// Override NodeID with the one derived from Web3Signer TLS key
+		nodeID, err := ids.NodeIDFromString(tlsKeyInfo.NodeID)
+		if err != nil {
+			_ = n.cryfteeManager.Stop()
+			return nil, fmt.Errorf("invalid NodeID from cryftee: %s: %w", tlsKeyInfo.NodeID, err)
+		}
+
+		n.ID = nodeID
+		logger.Info("node identity obtained from cryftee/Web3Signer",
+			zap.Stringer("nodeID", n.ID),
+			zap.String("blsPubkey", blsKeyInfo.PublicKey),
+			zap.String("tlsPubkey", tlsKeyInfo.PublicKey),
+		)
+	} else if config.CryfteeBinaryPath != "" {
+		// Cryftee binary specified but Web3Signer not enabled - just start for runtime info
+		logger.Info("starting cryftee for runtime info only (Web3Signer disabled)")
+
+		n.cryfteeManager = NewCryfteeManager(CryfteeManagerConfig{
+			BinaryPath:     config.CryfteeBinaryPath,
+			HTTPAddr:       extractHostPort(config.RuntimeCryfteeURL),
+			StartupTimeout: config.CryfteeStartupTimeout,
+			ExpectedHashes: config.CryfteeExpectedHashes,
+		}, logger)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := n.cryfteeManager.Start(ctx); err != nil {
+			return nil, fmt.Errorf("failed to start cryftee sidecar: %w", err)
+		}
+
+		logger.Info("cryftee sidecar started (runtime info mode)",
+			zap.String("verifiedHash", n.cryfteeManager.VerifiedHash()),
+		)
+	}
+
+	// Runtime info client - only if explicitly enabled (separate from Web3Signer mode)
+	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
+		logger.Info("initializing Cryftee runtime client",
+			zap.String("url", config.RuntimeCryfteeURL),
+			zap.Duration("timeout", config.RuntimeCryfteeTimeout),
+		)
+		n.runtimeClient = NewHTTPRuntimeInfoClient(
+			config.RuntimeCryfteeURL,
+			config.RuntimeCryfteeTimeout,
 		)
 	}
 
@@ -1308,9 +1354,11 @@ func New(
 	// client can surface the POP via runtime info APIs instead.
 	var pop *signer.ProofOfPossession
 	if n.Config.StakingSigningKey != nil {
+		// Local mode - construct POP from local key
 		pop = signer.NewProofOfPossession(n.Config.StakingSigningKey)
 	} else if n.Config.Web3SignerEnabled {
-		logger.Info("web3signer-backed staking is enabled; local BLS staking key/POP are managed externally via Cryftee/Web3Signer")
+		// Remote mode - POP managed by cryftee (not constructed locally)
+		logger.Info("web3signer-backed staking enabled; local BLS staking key/POP are managed externally via Cryftee/Web3Signer")
 	}
 
 	logger.Info("initializing node",

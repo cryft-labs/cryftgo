@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -385,42 +386,95 @@ func (m *CryfteeManager) InitBLSKey(ctx context.Context) (*BLSKeyInfo, error) {
 }
 
 // InitTLSKey initializes or loads an existing TLS key.
+// Returns an error if the key cannot be obtained - this is a critical failure
+// when Web3Signer mode is enabled as the node cannot determine its identity.
 func (m *CryfteeManager) InitTLSKey(ctx context.Context) (*TLSKeyInfo, error) {
+	// Try to load existing key first
 	if key, err := m.loadExistingTLSKey(); err == nil && key != nil {
-		m.log.Info("using existing TLS key", zap.String("nodeID", key.NodeID))
-		return key, nil
+		// Verify the key still exists in Web3Signer
+		if err := m.verifyTLSKeyExists(ctx, key.PublicKey); err != nil {
+			m.log.Warn("cached TLS key no longer exists in Web3Signer, will register new one",
+				zap.String("nodeID", key.NodeID),
+				zap.Error(err),
+			)
+		} else {
+			m.log.Info("using existing TLS key", zap.String("nodeID", key.NodeID))
+			return key, nil
+		}
 	}
 
+	// Register new TLS key
 	req := map[string]interface{}{"key_type": "SECP256K1", "purpose": "node_tls"}
-	body, _ := json.Marshal(req)
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal TLS register request: %w", err)
+	}
 
 	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/tls/register", body)
 	if err != nil {
-		return nil, fmt.Errorf("TLS key generation failed: %w", err)
+		return nil, fmt.Errorf("TLS key registration request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TLS key registration returned status %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("TLS key registration returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var result struct {
 		PublicKey   string `json:"pubkey"`
 		SecretPath  string `json:"secret_path"`
 		Certificate string `json:"certificate"`
+		NodeID      string `json:"node_id,omitempty"` // Cryftee may compute this
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode TLS register response: %w", err)
 	}
 
-	nodeID := deriveNodeID(result.PublicKey)
-	keyInfo := &TLSKeyInfo{
-		PublicKey: result.PublicKey, NodeID: nodeID, SecretPath: result.SecretPath,
-		Certificate: result.Certificate, CreatedAt: time.Now().Unix(),
+	if result.PublicKey == "" {
+		return nil, fmt.Errorf("TLS registration returned empty public key")
 	}
-	_ = m.saveTLSKeyInfo(keyInfo)
-	m.log.Info("generated new TLS key", zap.String("nodeID", keyInfo.NodeID))
+
+	// Derive NodeID if not provided by cryftee
+	nodeID := result.NodeID
+	if nodeID == "" {
+		nodeID = deriveNodeID(result.PublicKey)
+	}
+
+	keyInfo := &TLSKeyInfo{
+		PublicKey:   result.PublicKey,
+		NodeID:      nodeID,
+		SecretPath:  result.SecretPath,
+		Certificate: result.Certificate,
+		CreatedAt:   time.Now().Unix(),
+	}
+
+	if err := m.saveTLSKeyInfo(keyInfo); err != nil {
+		m.log.Warn("failed to cache TLS key info", zap.Error(err))
+	}
+
+	m.log.Info("generated new TLS key via Web3Signer",
+		zap.String("nodeID", keyInfo.NodeID),
+		zap.String("pubkey", keyInfo.PublicKey),
+	)
 	return keyInfo, nil
+}
+
+// verifyTLSKeyExists checks if a TLS key still exists in Web3Signer
+func (m *CryfteeManager) verifyTLSKeyExists(ctx context.Context, pubkey string) error {
+	req := map[string]interface{}{"pubkey": pubkey}
+	body, _ := json.Marshal(req)
+
+	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/tls/verify", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("key verification failed with status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func deriveNodeID(pubkeyHex string) string {
@@ -589,4 +643,179 @@ func (m *CryfteeManager) IsRunning() bool {
 
 	// On Unix, sending signal 0 checks if process exists
 	return m.process.Process.Signal(os.Signal(nil)) == nil
+}
+
+// StakingStatus represents the response from /v1/staking/status
+type StakingStatus struct {
+	Ready         bool     `json:"ready"`
+	Web3SignerURL string   `json:"web3signer_url"`
+	Web3SignerOK  bool     `json:"web3signer_connected"`
+	BLSPubkeys    []string `json:"bls_pubkeys"`
+	TLSPubkeys    []string `json:"tls_pubkeys"`
+	ModuleVersion string   `json:"module_version"`
+	Capabilities  []string `json:"capabilities"`
+}
+
+// GetStakingStatus queries cryftee for available keys from Web3Signer
+func (m *CryfteeManager) GetStakingStatus(ctx context.Context) (*StakingStatus, error) {
+	resp, err := m.callAPI(ctx, http.MethodGet, "/v1/staking/status", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get staking status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("staking status returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var status StakingStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("failed to decode staking status: %w", err)
+	}
+
+	return &status, nil
+}
+
+// VerifySignerReady checks that cryftee has Web3Signer module enabled and connected
+func (m *CryfteeManager) VerifySignerReady(ctx context.Context) (*StakingStatus, error) {
+	status, err := m.GetStakingStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !status.Ready {
+		return nil, fmt.Errorf("staking module not ready")
+	}
+
+	if !status.Web3SignerOK {
+		return nil, fmt.Errorf("Web3Signer not connected (url: %s)", status.Web3SignerURL)
+	}
+
+	m.log.Info("Web3Signer ready",
+		zap.String("url", status.Web3SignerURL),
+		zap.String("moduleVersion", status.ModuleVersion),
+		zap.Int("blsKeys", len(status.BLSPubkeys)),
+		zap.Int("tlsKeys", len(status.TLSPubkeys)),
+	)
+
+	return status, nil
+}
+
+// InitKeys checks Web3Signer for existing keys, generates if not found.
+// Returns error if there's a key mismatch (possible tampering or key loss).
+func (m *CryfteeManager) InitKeys(ctx context.Context, status *StakingStatus) (*BLSKeyInfo, *TLSKeyInfo, error) {
+	var blsKey *BLSKeyInfo
+	var tlsKey *TLSKeyInfo
+	var err error
+
+	// Load any previously saved pubkeys
+	savedBLSPubkey := m.loadSavedBLSPubkey()
+	savedTLSPubkey := m.loadSavedTLSPubkey()
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// BLS KEY LOGIC
+	// ═══════════════════════════════════════════════════════════════════════
+	if len(status.BLSPubkeys) == 0 {
+		// No keys in Web3Signer - generate new one
+		m.log.Info("no BLS keys available in Web3Signer, generating new key")
+		blsKey, err = m.InitBLSKey(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("BLS key generation failed: %w", err)
+		}
+		_ = m.saveBLSPubkey(blsKey.PublicKey)
+
+	} else if savedBLSPubkey != "" {
+		// We have a saved pubkey - verify it exists in Web3Signer
+		found := false
+		for _, pk := range status.BLSPubkeys {
+			if pk == savedBLSPubkey {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, nil, fmt.Errorf("BLS key mismatch: expected %s but not found in Web3Signer (available: %v); "+
+				"this could indicate key loss or tampering", savedBLSPubkey, status.BLSPubkeys)
+		}
+		blsKey = &BLSKeyInfo{PublicKey: savedBLSPubkey}
+		m.log.Info("using existing BLS key", zap.String("pubkey", blsKey.PublicKey))
+
+	} else {
+		// Web3Signer has keys but we don't have a saved reference - adopt first
+		blsKey = &BLSKeyInfo{PublicKey: status.BLSPubkeys[0]}
+		_ = m.saveBLSPubkey(blsKey.PublicKey)
+		m.log.Info("adopting existing BLS key from Web3Signer", zap.String("pubkey", blsKey.PublicKey))
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// TLS KEY LOGIC (same pattern)
+	// ═══════════════════════════════════════════════════════════════════════
+	if len(status.TLSPubkeys) == 0 {
+		m.log.Info("no TLS keys available in Web3Signer, generating new key")
+		tlsKey, err = m.InitTLSKey(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("TLS key generation failed: %w", err)
+		}
+		_ = m.saveTLSPubkey(tlsKey.PublicKey)
+
+	} else if savedTLSPubkey != "" {
+		found := false
+		for _, pk := range status.TLSPubkeys {
+			if pk == savedTLSPubkey {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, nil, fmt.Errorf("TLS key mismatch: expected %s but not found in Web3Signer; "+
+				"Node ID would change - this could indicate key loss", savedTLSPubkey)
+		}
+		tlsKey = &TLSKeyInfo{
+			PublicKey: savedTLSPubkey,
+			NodeID:    deriveNodeID(savedTLSPubkey),
+		}
+		m.log.Info("using existing TLS key", zap.String("nodeID", tlsKey.NodeID))
+
+	} else {
+		pubkey := status.TLSPubkeys[0]
+		tlsKey = &TLSKeyInfo{
+			PublicKey: pubkey,
+			NodeID:    deriveNodeID(pubkey),
+		}
+		_ = m.saveTLSPubkey(pubkey)
+		m.log.Info("adopting existing TLS key from Web3Signer", zap.String("nodeID", tlsKey.NodeID))
+	}
+
+	return blsKey, tlsKey, nil
+}
+
+// saveBLSPubkey persists the BLS public key reference locally
+func (m *CryfteeManager) saveBLSPubkey(pubkey string) error {
+	_ = os.MkdirAll(m.config.KeyDataDir, 0700)
+	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "bls_pubkey"), []byte(pubkey), 0600)
+}
+
+// loadSavedBLSPubkey loads the previously saved BLS public key
+func (m *CryfteeManager) loadSavedBLSPubkey() string {
+	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "bls_pubkey"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// saveTLSPubkey persists the TLS public key reference locally
+func (m *CryfteeManager) saveTLSPubkey(pubkey string) error {
+	_ = os.MkdirAll(m.config.KeyDataDir, 0700)
+	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "tls_pubkey"), []byte(pubkey), 0600)
+}
+
+// loadSavedTLSPubkey loads the previously saved TLS public key
+func (m *CryfteeManager) loadSavedTLSPubkey() string {
+	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "tls_pubkey"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
