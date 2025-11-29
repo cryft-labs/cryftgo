@@ -160,10 +160,10 @@ func NewCryfteeManager(config CryfteeManagerConfig, log logging.Logger) *Cryftee
 		config.Transport = TransportUDS // DEFAULT: Unix Domain Socket
 	}
 	if config.SocketPath == "" {
-		config.SocketPath = DefaultCryfteeSocketPath // DEFAULT: /var/run/cryftee.sock
+		config.SocketPath = DefaultCryfteeSocketPath // DEFAULT: /tmp/cryftee.sock
 	}
 	if config.HTTPAddr == "" {
-		config.HTTPAddr = DefaultCryfteeHTTPAddr // DEFAULT: 127.0.0.1:8787
+		config.HTTPAddr = DefaultCryfteeHTTPAddr // DEFAULT: 127.0.0.1:8443
 	}
 	if config.Web3SignerURL == "" {
 		config.Web3SignerURL = DefaultWeb3SignerURL // DEFAULT: http://localhost:9000
@@ -171,6 +171,18 @@ func NewCryfteeManager(config CryfteeManagerConfig, log logging.Logger) *Cryftee
 	if config.KeyDataDir == "" {
 		config.KeyDataDir = DefaultKeyDataDir
 	}
+
+	// Log configuration for debugging
+	log.Info("initializing CryfteeManager",
+		zap.String("transport", string(config.Transport)),
+		zap.String("socketPath", config.SocketPath),
+		zap.String("httpAddr", config.HTTPAddr),
+		zap.String("web3SignerURL", config.Web3SignerURL),
+		zap.String("keyDataDir", config.KeyDataDir),
+		zap.Duration("startupTimeout", config.StartupTimeout),
+		zap.Bool("web3SignerEnabled", config.Web3SignerEnabled),
+		zap.String("binaryPath", config.BinaryPath),
+	)
 
 	return &CryfteeManager{
 		config: config,

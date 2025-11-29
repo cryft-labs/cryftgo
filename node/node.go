@@ -1090,7 +1090,6 @@ func (n *Node) initHealthAPI() error {
 			n.Log.Fatal("low on disk space. Shutting down...",
 				zap.Uint64("remainingDiskBytes", availableDiskBytes),
 			)
-			go n.Shutdown(1)
 			err = fmt.Errorf("remaining available disk space (%d) is below minimum required available space (%d)", availableDiskBytes, n.Config.RequiredAvailableDiskSpace)
 		} else if availableDiskBytes < n.Config.WarningThresholdAvailableDiskSpace {
 			err = fmt.Errorf("remaining available disk space (%d) is below the warning threshold of disk space (%d)", availableDiskBytes, n.Config.WarningThresholdAvailableDiskSpace)
@@ -1842,4 +1841,48 @@ func (n *Node) initDatabase() error {
 	}
 
 	return nil
+}
+
+// initCryfttee initializes the CryftTEE sidecar client for key management
+func (n *Node) initCryfttee() error {
+	n.Log.Info("initializing CryftTEE integration",
+		zap.Bool("web3SignerEnabled", n.Config.Web3SignerEnabled),
+		zap.String("transport", n.Config.RuntimeCryfteeTransport),
+		zap.String("socketPath", n.Config.RuntimeCryfteeSocket),
+		zap.String("httpAddr", n.Config.RuntimeCryfteeHTTPAddr),
+		zap.Duration("timeout", n.Config.RuntimeCryfteeTimeout),
+		zap.Bool("runtimeEnabled", n.Config.RuntimeCryfteeEnabled),
+	)
+
+	if !n.Config.RuntimeCryfteeEnabled && !n.Config.Web3SignerEnabled {
+		n.Log.Info("CryftTEE integration disabled, using local key management")
+		return nil
+	}
+
+	// Use the existing CryfteeManager if already initialized (Web3Signer mode)
+	if n.cryfteeManager != nil {
+		n.Log.Info("CryftTEE manager already initialized via Web3Signer mode")
+		return nil
+	}
+
+	// For standalone runtime info mode, create a runtime info client
+	if n.Config.RuntimeCryfteeEnabled && n.runtimeClient == nil {
+		n.Log.Info("creating standalone CryftTEE runtime info client")
+		n.runtimeClient = NewRuntimeInfoClient(RuntimeInfoClientConfig{
+			Transport: n.Config.RuntimeCryfteeTransport,
+			Socket:    n.Config.RuntimeCryfteeSocket,
+			URL:       n.Config.RuntimeCryfteeHTTPAddr,
+			Timeout:   n.Config.RuntimeCryfteeTimeout,
+		})
+	}
+
+	return nil
+}
+
+// truncateKey returns a truncated version of a key for logging
+func truncateKey(key string) string {
+	if len(key) <= 16 {
+		return key
+	}
+	return key[:16] + "..."
 }

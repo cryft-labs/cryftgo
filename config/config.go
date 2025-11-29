@@ -1524,3 +1524,46 @@ func providedFlags(v *viper.Viper) map[string]interface{} {
 	}
 	return customSettings
 }
+
+const (
+	// CryftTEE configuration keys
+	CryftteeEnabledKey      = "cryfttee-enabled"
+	CryftteeTransportKey    = "cryfttee-transport"
+	CryftteeSocketKey       = "cryfttee-socket"
+	CryftteeHTTPAddrKey     = "cryfttee-http-addr"
+	CryftteeExpectedHashKey = "cryfttee-expected-hash"
+	CryftteeTimeoutKey      = "cryfttee-timeout"
+)
+
+// CryftTEE config
+type CryftteeConfig struct {
+	Enabled      bool
+	Transport    string
+	SocketPath   string
+	HTTPAddr     string
+	Timeout      time.Duration
+	ExpectedHash string
+}
+
+// String returns a string representation of the CryftTEE config for logging
+func (c CryftteeConfig) String() string {
+	return fmt.Sprintf(
+		"CryftteeConfig{Enabled: %t, Transport: %s, SocketPath: %s, HTTPAddr: %s, Timeout: %s, ExpectedHash: %s}",
+		c.Enabled,
+		c.Transport,
+		c.SocketPath,
+		c.HTTPAddr,
+		c.Timeout,
+		truncateHash(c.ExpectedHash),
+	)
+}
+
+func truncateHash(hash string) string {
+	if hash == "" {
+		return "(not set)"
+	}
+	if len(hash) <= 16 {
+		return hash
+	}
+	return hash[:16] + "..."
+}

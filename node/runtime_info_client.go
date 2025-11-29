@@ -14,14 +14,6 @@ import (
 	"github.com/cryft-labs/cryftgo/node/runtimeinfo"
 )
 
-const (
-// DefaultCryfteeSocketPath is the default path for the CryftTEE UDS socket.
-// DefaultCryfteeSocketPath = "/tmp/cryftee.sock"
-
-// DefaultCryfteeHTTPAddr is the default HTTP address for CryftTEE.
-// DefaultCryfteeHTTPAddr = "127.0.0.1:8443"
-)
-
 // RuntimeInfoClient is an interface for fetching runtime info from cryftee.
 type RuntimeInfoClient interface {
 	GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, error)
@@ -35,15 +27,45 @@ type RuntimeInfoClientConfig struct {
 	Timeout   time.Duration // Request timeout
 }
 
-// runtimeInfoClient implements RuntimeInfoClient.
-type runtimeInfoClient struct {
-	httpClient *http.Client
-	transport  string
-	socket     string
-	url        string
+// runtimeInfoClientFromManager wraps CryfteeManager to implement RuntimeInfoClient.
+type runtimeInfoClientFromManager struct {
+	manager *CryfteeManager
 }
 
-// NewRuntimeInfoClient creates a new RuntimeInfoClient.
+// NewRuntimeInfoClientFromManager creates a RuntimeInfoClient backed by a CryfteeManager.
+func NewRuntimeInfoClientFromManager(manager *CryfteeManager) RuntimeInfoClient {
+	return &runtimeInfoClientFromManager{manager: manager}
+}
+
+// GetRuntimeInfo fetches runtime info from the cryftee sidecar via the manager.
+func (c *runtimeInfoClientFromManager) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, error) {
+	resp, err := c.manager.callAPI(ctx, http.MethodGet, "/v1/runtime/self", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch runtime info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("runtime info request failed with status %d", resp.StatusCode)
+	}
+
+	var info runtimeinfo.RuntimeInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("failed to decode runtime info: %w", err)
+	}
+
+	return &info, nil
+}
+
+// standaloneRuntimeInfoClient implements RuntimeInfoClient without requiring CryfteeManager.
+// Use this when you need runtime info but don't have the full manager lifecycle.
+type standaloneRuntimeInfoClient struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+// NewRuntimeInfoClient creates a standalone RuntimeInfoClient.
+// This is useful for lightweight clients that only need runtime info.
 func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 	timeout := config.Timeout
 	if timeout == 0 {
@@ -57,18 +79,19 @@ func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 
 	socket := config.Socket
 	if socket == "" {
-		socket = DefaultCryfteeSocketPath // /tmp/cryftee.sock per spec (from cryftee_manager.go)
+		socket = DefaultCryfteeSocketPath // /tmp/cryftee.sock
 	}
 
 	url := config.URL
 	if url == "" {
-		url = DefaultCryfteeHTTPAddr // 127.0.0.1:8443 per spec (from cryftee_manager.go)
+		url = DefaultCryfteeHTTPAddr // 127.0.0.1:8443
 	}
 
-	var httpClient *http.Client
+	client := &standaloneRuntimeInfoClient{}
+
 	switch transport {
 	case "uds":
-		httpClient = &http.Client{
+		client.httpClient = &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -76,32 +99,21 @@ func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 				},
 			},
 		}
-	default:
-		httpClient = &http.Client{Timeout: timeout}
+		client.baseURL = "http://localhost" // Host ignored for UDS
+	case "https":
+		client.httpClient = &http.Client{Timeout: timeout}
+		client.baseURL = "https://" + url
+	default: // "http"
+		client.httpClient = &http.Client{Timeout: timeout}
+		client.baseURL = "http://" + url
 	}
 
-	return &runtimeInfoClient{
-		httpClient: httpClient,
-		transport:  transport,
-		socket:     socket,
-		url:        url,
-	}
+	return client
 }
 
 // GetRuntimeInfo fetches runtime info from the cryftee sidecar.
-func (c *runtimeInfoClient) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, error) {
-	var url string
-	switch c.transport {
-	case "uds":
-		// For UDS, we use http://localhost as a placeholder host
-		// The actual connection goes through the unix socket
-		// CryftTEE API uses /v1 prefix per spec
-		url = "http://localhost/v1/runtime/self"
-	case "https":
-		url = "https://" + c.url + "/v1/runtime/self"
-	default: // "http"
-		url = "http://" + c.url + "/v1/runtime/self"
-	}
+func (c *standaloneRuntimeInfoClient) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, error) {
+	url := c.baseURL + "/v1/runtime/self"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
