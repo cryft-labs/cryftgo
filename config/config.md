@@ -113,22 +113,61 @@ shutdown. Defaults to `10s`.
 
 These options configure integration with the external Cryftee runtime sidecar.
 
-#### `--runtime-cryftee-url` (string)
+#### `--runtime-cryftee-enabled` (boolean)
 
-Base URL for the Cryftee sidecar HTTP API (for example, `http://127.0.0.1:9099`).
-If empty, Cryftee integration is effectively disabled regardless of
-`--runtime-cryftee-enabled`.
+If set to `true`, the node will connect to a Cryftee sidecar for runtime and pin health information, which is exposed via the Info API (`info.getRuntimeInfo`). Defaults to `false`.
+
+#### `--runtime-cryftee-transport` (string)
+
+Transport type for connecting to Cryftee. Options are `uds` (Unix Domain Socket, default) or `http`. Defaults to `uds`.
+
+#### `--runtime-cryftee-socket` (string)
+
+Path to the Cryftee UDS socket when using `--runtime-cryftee-transport=uds`. Defaults to `/var/run/cryftee.sock`.
+
+#### `--runtime-cryftee-http-addr` (string)
+
+HTTP address for Cryftee when using `--runtime-cryftee-transport=http`. Format: `host:port`. Defaults to `127.0.0.1:8787`.
 
 #### `--runtime-cryftee-timeout` (duration)
 
-HTTP timeout used when querying Cryftee (for example, `5s`). Defaults to `5s`.
+HTTP timeout used when querying Cryftee. Defaults to `10s`.
 
-#### `--runtime-cryftee-enabled` (boolean)
+## Cryftee Binary Management
 
-If set to `true` and `--runtime-cryftee-url` is non-empty, the node will
-periodically query the Cryftee sidecar for runtime and pin health information,
-which is exposed via the Info API (for example, `info.getRuntimeInfo`). Defaults
-to `false`.
+These options are for running cryftee as a managed sidecar process (optional).
+
+#### `--cryftee-binary-path` (string)
+
+Path to the cryftee binary. If set, cryftgo will launch and manage the cryftee process. If empty (default), cryftgo expects cryftee to be running externally.
+
+#### `--cryftee-expected-hashes` (string array)
+
+Optional list of expected SHA256 hashes for the cryftee binary. If provided, cryftgo will verify the binary integrity before launching. Format: `sha256:<64-char-hex>`.
+
+#### `--cryftee-startup-timeout` (duration)
+
+Timeout for waiting for cryftee to start when managed by cryftgo. Defaults to `30s`.
+
+## Web3Signer / Cryftee-backed Staking
+
+These options enable remote key management via Web3Signer through the Cryftee sidecar.
+
+#### `--staking-web3signer-enabled` (boolean)
+
+If set to `true`, BLS and TLS staking keys are managed by Web3Signer via Cryftee instead of local files. Requires `--cryftee-binary-path` to be set. Defaults to `false`.
+
+#### `--staking-web3signer-ephemeral` (boolean)
+
+If set to `true`, generate ephemeral (in-memory only) keys for testing. Not for production use. Defaults to `false`.
+
+#### `--staking-web3signer-key-material` (string)
+
+Base64-encoded key material to import into Web3Signer. Only used with ephemeral mode for testing. Cannot be combined with `--staking-web3signer-ephemeral`.
+
+#### `--web3signer-url` (string)
+
+URL of the Web3Signer instance. Defaults to `http://localhost:9000`.
 
 ## Bootstrapping
 
