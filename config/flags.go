@@ -248,15 +248,28 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.String(StakingSignerKeyPathKey, defaultStakingSignerKeyPath, fmt.Sprintf("Path to the signer private key for staking. Ignored if %s is specified", StakingSignerKeyContentKey))
 	fs.String(StakingSignerKeyContentKey, "", "Specifies base64 encoded signer private key for staking")
 
-	// Cryftee binary management and attestation
-	fs.String(CryfteeBinaryPathKey, "", "Path to the Cryftee binary for managed startup")
-	fs.StringSlice(CryfteeExpectedHashesKey, nil, "Expected SHA256 hashes of trusted Cryftee binaries (hex-encoded)")
-	fs.Duration(CryfteeStartupTimeoutKey, 30*time.Second, "Timeout for Cryftee binary startup and health check")
+	// ═══════════════════════════════════════════════════════════════════════════
+	// Cryftee Runtime Integration
+	// Primary flags use the spec-compliant names, with aliases for compatibility
+	// ═══════════════════════════════════════════════════════════════════════════
+
+	// Cryftee Runtime Info Client
+	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable Cryftee runtime info client")
+	fs.String(RuntimeCryfteeTransportKey, DefaultCryfteeTransport, "Transport for Cryftee communication: 'uds' (default) or 'http'")
+	fs.String(RuntimeCryfteeSocketKey, DefaultCryfteeSocketPath, "Path to Cryftee UDS socket (when transport=uds)")
+	fs.String(RuntimeCryfteeHTTPAddrKey, DefaultCryfteeHTTPAddr, "HTTP address for Cryftee (when transport=http)")
+	fs.Duration(RuntimeCryfteeTimeoutKey, 10*time.Second, "Timeout for Cryftee requests")
+
+	// Cryftee Binary Management
+	fs.String(CryfteeBinaryPathKey, "", "Path to cryftee binary (enables managed mode)")
+	fs.StringSlice(CryfteeExpectedHashesKey, nil, "Expected SHA256 hashes of cryftee binary for verification")
+	fs.Duration(CryfteeStartupTimeoutKey, 30*time.Second, "Timeout waiting for cryftee to start")
 
 	// Web3Signer / Cryftee-backed staking
-	fs.Bool(StakingWeb3SignerEnabledKey, false, "Delegate staking BLS/TLS signing to Cryftee/Web3Signer")
-	fs.Bool(StakingWeb3SignerEphemeralKey, false, "Use ephemeral key material for Web3Signer (test mode)")
-	fs.String(StakingWeb3SignerKeyMaterialB64Key, "", "Base64-encoded BLS secret key material for Web3Signer import")
+	fs.Bool(StakingWeb3SignerEnabledKey, false, "Enable Web3Signer-backed staking via cryftee")
+	fs.Bool(StakingWeb3SignerEphemeralKey, false, "Use ephemeral keys for testing (not persisted)")
+	fs.String(StakingWeb3SignerKeyMaterialB64Key, "", "Base64-encoded key material for ephemeral mode")
+	fs.String(StakingWeb3SignerURLKey, DefaultWeb3SignerURL, "URL of Web3Signer instance")
 
 	// Sybil Protection
 	fs.Bool(SybilProtectionEnabledKey, true, "Enables sybil protection. If enabled, Network TLS is required")

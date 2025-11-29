@@ -14,6 +14,14 @@ import (
 	"github.com/cryft-labs/cryftgo/node/runtimeinfo"
 )
 
+const (
+// DefaultCryfteeSocketPath is the default path for the CryftTEE UDS socket.
+// DefaultCryfteeSocketPath = "/tmp/cryftee.sock"
+
+// DefaultCryfteeHTTPAddr is the default HTTP address for CryftTEE.
+// DefaultCryfteeHTTPAddr = "127.0.0.1:8443"
+)
+
 // RuntimeInfoClient is an interface for fetching runtime info from cryftee.
 type RuntimeInfoClient interface {
 	GetRuntimeInfo(ctx context.Context) (*runtimeinfo.RuntimeInfo, error)
@@ -44,12 +52,17 @@ func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 
 	transport := config.Transport
 	if transport == "" {
-		transport = "uds"
+		transport = "uds" // Default per spec
 	}
 
 	socket := config.Socket
 	if socket == "" {
-		socket = DefaultCryfteeSocketPath // /tmp/cryftee.sock
+		socket = DefaultCryfteeSocketPath // /tmp/cryftee.sock per spec (from cryftee_manager.go)
+	}
+
+	url := config.URL
+	if url == "" {
+		url = DefaultCryfteeHTTPAddr // 127.0.0.1:8443 per spec (from cryftee_manager.go)
 	}
 
 	var httpClient *http.Client
@@ -71,7 +84,7 @@ func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 		httpClient: httpClient,
 		transport:  transport,
 		socket:     socket,
-		url:        config.URL,
+		url:        url,
 	}
 }
 
@@ -82,7 +95,7 @@ func (c *runtimeInfoClient) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.Ru
 	case "uds":
 		// For UDS, we use http://localhost as a placeholder host
 		// The actual connection goes through the unix socket
-		// CryftTEE API uses /v1 prefix
+		// CryftTEE API uses /v1 prefix per spec
 		url = "http://localhost/v1/runtime/self"
 	case "https":
 		url = "https://" + c.url + "/v1/runtime/self"

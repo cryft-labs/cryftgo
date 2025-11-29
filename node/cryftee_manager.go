@@ -902,3 +902,108 @@ func (m *CryfteeManager) loadSavedTLSPubkey() string {
 	}
 	return strings.TrimSpace(string(data))
 }
+
+// withRetry executes an operation with exponential backoff retry.
+func (m *CryfteeManager) withRetry(ctx context.Context, operation func() error) error {
+	backoff := 100 * time.Millisecond
+	maxBackoff := 5 * time.Second
+	maxAttempts := 10
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+
+		if attempt == maxAttempts {
+			return fmt.Errorf("operation failed after %d attempts: %w", maxAttempts, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		m.log.Warn("CryftTEE operation failed, retrying",
+			zap.Int("attempt", attempt),
+			zap.Error(err),
+			zap.Duration("backoff", backoff),
+		)
+
+		time.Sleep(backoff)
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+
+	return nil
+}
+
+// WaitForSignerModule waits for the signer module to be loaded and ready.
+// This checks for BLS signing capability specifically.
+func (m *CryfteeManager) WaitForSignerModule(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		status, err := m.GetStakingStatus(ctx)
+		if err != nil {
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		// Check if signer module has BLS capability
+		for _, cap := range status.Capabilities {
+			if cap == "bls_sign" || cap == "BLS_SIGN" {
+				m.log.Info("Signer module ready",
+					zap.String("version", status.ModuleVersion),
+					zap.Strings("capabilities", status.Capabilities),
+				)
+				return nil
+			}
+		}
+
+		// Fallback: if Ready is true and Web3Signer is connected, consider it ready
+		if status.Ready && status.Web3SignerOK {
+			m.log.Info("Signer module ready (Web3Signer connected)",
+				zap.String("web3signerURL", status.Web3SignerURL),
+			)
+			return nil
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("signer module not ready after %v", timeout)
+}
+
+// SignBLSWithRetry signs data using BLS with retry logic.
+func (m *CryfteeManager) SignBLSWithRetry(ctx context.Context, pubkey string, data []byte, sigType string) ([]byte, error) {
+	var signature []byte
+	err := m.withRetry(ctx, func() error {
+		var err error
+		signature, err = m.SignBLS(ctx, pubkey, data, sigType)
+		return err
+	})
+	return signature, err
+}
+
+// SignTLSWithRetry signs data using TLS with retry logic.
+func (m *CryfteeManager) SignTLSWithRetry(ctx context.Context, pubkey string, data []byte) ([]byte, error) {
+	var signature []byte
+	err := m.withRetry(ctx, func() error {
+		var err error
+		signature, err = m.SignTLS(ctx, pubkey, data)
+		return err
+	})
+	return signature, err
+}
