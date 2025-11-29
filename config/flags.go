@@ -251,7 +251,6 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	// Runtime / Cryftee sidecar
 	fs.String(RuntimeCryfteeHTTPAddrKey, "", "URL of the Cryftee runtime sidecar (e.g., http://127.0.0.1:8765)")
 	fs.Duration(RuntimeCryfteeTimeoutKey, 5*time.Second, "HTTP timeout for Cryftee runtime calls")
-	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable Cryftee runtime integration")
 
 	// Cryftee binary management and attestation
 	fs.String(CryfteeBinaryPathKey, "", "Path to the Cryftee binary for managed startup")
