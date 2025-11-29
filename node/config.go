@@ -195,16 +195,16 @@ type Config struct {
 	UseCurrentHeight bool `json:"useCurrentHeight"`
 
 	// Runtime / Cryftee sidecar settings
-	RuntimeCryfteeURL     string        `json:"runtimeCryfteeURL" yaml:"runtimeCryfteeURL"`
-	RuntimeCryfteeTimeout time.Duration `json:"runtimeCryfteeTimeout" yaml:"runtimeCryfteeTimeout"`
-	RuntimeCryfteeEnabled bool          `json:"runtimeCryfteeEnabled" yaml:"runtimeCryfteeEnabled"`
+	RuntimeCryfteeEnabled   bool          `json:"runtimeCryfteeEnabled"`
+	RuntimeCryfteeTransport string        `json:"runtimeCryfteeTransport"`
+	RuntimeCryfteeSocket    string        `json:"runtimeCryfteeSocket"`
+	RuntimeCryfteeHTTPAddr  string        `json:"runtimeCryfteeHTTPAddr"`
+	RuntimeCryfteeTimeout   time.Duration `json:"runtimeCryfteeTimeout"`
 
-	// Cryftee binary management: when CryfteeBinaryPath is set, cryftgo can
-	// optionally spawn and manage the Cryftee process itself (useful for
-	// single-binary deployments or TEE environments).
-	CryfteeBinaryPath     string        `json:"cryfteeBinaryPath" yaml:"cryfteeBinaryPath"`
-	CryfteeExpectedHashes []string      `json:"cryfteeExpectedHashes" yaml:"cryfteeExpectedHashes"`
-	CryfteeStartupTimeout time.Duration `json:"cryfteeStartupTimeout" yaml:"cryfteeStartupTimeout"`
+	// Cryftee binary management
+	CryfteeBinaryPath     string        `json:"cryfteeBinaryPath"`
+	CryfteeExpectedHashes []string      `json:"cryfteeExpectedHashes"`
+	CryfteeStartupTimeout time.Duration `json:"cryfteeStartupTimeout"`
 
 	// ProvidedFlags contains all the flags set by the user
 	ProvidedFlags map[string]interface{} `json:"-"`
@@ -249,7 +249,9 @@ type StakingConfig struct {
 	//   - Web3SignerKeyMaterialB64: optional base64-encoded BLS secret key
 	//     material to hand to Cryftee/Web3Signer for import. Empty means
 	//     "let Web3Signer manage its own persisted keys".
-	Web3SignerEnabled        bool   `json:"web3SignerEnabled"`
-	Web3SignerEphemeral      bool   `json:"web3SignerEphemeral"`
-	Web3SignerKeyMaterialB64 string `json:"web3SignerKeyMaterialB64"`
+	Web3SignerEnabled        bool        `json:"web3SignerEnabled"`
+	Web3SignerEphemeral      bool        `json:"web3SignerEphemeral"`
+	Web3SignerKeyMaterialB64 string      `json:"web3SignerKeyMaterialB64"`
+	Web3SignerURL            string      `json:"web3SignerURL"`
+	RemoteTLSSigner          interface{} `json:"-"` // node.RemoteTLSSigner when enabled
 }

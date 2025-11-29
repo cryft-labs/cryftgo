@@ -1500,9 +1500,11 @@ func GetNodeConfig(v *viper.Viper) (node.Config, error) {
 	}
 
 	// Runtime / Cryftee integration
-	nodeConfig.RuntimeCryfteeURL = v.GetString(RuntimeCryfteeURLKey)
-	nodeConfig.RuntimeCryfteeTimeout = v.GetDuration(RuntimeCryfteeTimeoutKey)
 	nodeConfig.RuntimeCryfteeEnabled = v.GetBool(RuntimeCryfteeEnabledKey)
+	nodeConfig.RuntimeCryfteeTransport = v.GetString(RuntimeCryfteeTransportKey)
+	nodeConfig.RuntimeCryfteeSocket = v.GetString(RuntimeCryfteeSocketKey)
+	nodeConfig.RuntimeCryfteeHTTPAddr = v.GetString(RuntimeCryfteeHTTPAddrKey)
+	nodeConfig.RuntimeCryfteeTimeout = v.GetDuration(RuntimeCryfteeTimeoutKey)
 
 	nodeConfig.ChainDataDir = GetExpandedArg(v, ChainDataDirKey)
 

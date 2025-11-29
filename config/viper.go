@@ -74,13 +74,19 @@ func deprecateConfigs(v *viper.Viper, output io.Writer) {
 
 func BindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
 	// Runtime / Cryftee
-	if err := v.BindPFlag(RuntimeCryfteeURLKey, fs.Lookup(RuntimeCryfteeURLKey)); err != nil {
+	if err := v.BindPFlag(RuntimeCryfteeEnabledKey, fs.Lookup(RuntimeCryfteeEnabledKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(RuntimeCryfteeTransportKey, fs.Lookup(RuntimeCryfteeTransportKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(RuntimeCryfteeSocketKey, fs.Lookup(RuntimeCryfteeSocketKey)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(RuntimeCryfteeHTTPAddrKey, fs.Lookup(RuntimeCryfteeHTTPAddrKey)); err != nil {
 		return err
 	}
 	if err := v.BindPFlag(RuntimeCryfteeTimeoutKey, fs.Lookup(RuntimeCryfteeTimeoutKey)); err != nil {
-		return err
-	}
-	if err := v.BindPFlag(RuntimeCryfteeEnabledKey, fs.Lookup(RuntimeCryfteeEnabledKey)); err != nil {
 		return err
 	}
 
@@ -103,6 +109,9 @@ func BindFlags(fs *pflag.FlagSet, v *viper.Viper) error {
 		return err
 	}
 	if err := v.BindPFlag(StakingWeb3SignerKeyMaterialB64Key, fs.Lookup(StakingWeb3SignerKeyMaterialB64Key)); err != nil {
+		return err
+	}
+	if err := v.BindPFlag(StakingWeb3SignerURLKey, fs.Lookup(StakingWeb3SignerURLKey)); err != nil {
 		return err
 	}
 

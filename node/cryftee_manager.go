@@ -30,13 +30,28 @@ const (
 	// reads to obtain the externally-verified binary hash for attestation.
 	CryfteeVerifiedBinaryHashEnv = "CRYFTEE_VERIFIED_BINARY_HASH"
 
-	// Default paths and timeouts
-	DefaultCryfteeSocketPath     = "/var/run/cryftee.sock"
-	defaultCryfteeStartupTimeout = 5 * time.Second
+	// ═══════════════════════════════════════════════════════════════════════════
+	// SHARED DEFAULTS - These MUST match between cryftgo and cryftee
+	// ═══════════════════════════════════════════════════════════════════════════
+
+	// DefaultCryfteeSocketPath is the default UDS socket path
+	DefaultCryfteeSocketPath = "/var/run/cryftee.sock"
+
+	// DefaultCryfteeHTTPAddr is the default HTTP address (only when transport=http)
+	DefaultCryfteeHTTPAddr = "127.0.0.1:8787"
+
+	// DefaultWeb3SignerURL is the default Web3Signer URL
+	DefaultWeb3SignerURL = "http://localhost:9000"
+
+	// Timeouts
+	defaultCryfteeStartupTimeout = 30 * time.Second
 	defaultCryfteeHTTPTimeout    = 30 * time.Second
 
 	// Key data directory for persisting key metadata
 	DefaultKeyDataDir = "/var/lib/cryftgo/keys"
+
+	// DefaultCryfteeBinaryPath is empty - users must explicitly set --cryftee-binary-path
+	DefaultCryfteeBinaryPath = ""
 )
 
 // CryfteeTransport defines the transport type for cryftee communication.
@@ -92,12 +107,17 @@ type CryfteeManagerConfig struct {
 	Transport CryfteeTransport
 
 	// SocketPath is the UDS path (used when Transport=uds)
+	// Default: /var/run/cryftee.sock
 	SocketPath string
 
 	// HTTPAddr is the address where cryftee's HTTP API is accessible.
-	// Format: "host:port" (e.g., "127.0.0.1:9652")
-	// Used when Transport=http or https
+	// Format: "host:port" (e.g., "127.0.0.1:8787")
+	// Default: 127.0.0.1:8787 (only used when Transport=http)
 	HTTPAddr string
+
+	// Web3SignerURL is the URL of the Web3Signer instance
+	// Default: http://localhost:9000
+	Web3SignerURL string
 
 	// StartupTimeout is how long to wait for cryftee to start.
 	StartupTimeout time.Duration
@@ -132,14 +152,21 @@ type CryfteeManager struct {
 
 // NewCryfteeManager creates a new CryfteeManager with the given configuration.
 func NewCryfteeManager(config CryfteeManagerConfig, log logging.Logger) *CryfteeManager {
+	// Apply defaults - MUST match cryftee's defaults
 	if config.StartupTimeout == 0 {
 		config.StartupTimeout = defaultCryfteeStartupTimeout
 	}
 	if config.Transport == "" {
-		config.Transport = TransportUDS
+		config.Transport = TransportUDS // DEFAULT: Unix Domain Socket
 	}
 	if config.SocketPath == "" {
-		config.SocketPath = DefaultCryfteeSocketPath
+		config.SocketPath = DefaultCryfteeSocketPath // DEFAULT: /var/run/cryftee.sock
+	}
+	if config.HTTPAddr == "" {
+		config.HTTPAddr = DefaultCryfteeHTTPAddr // DEFAULT: 127.0.0.1:8787
+	}
+	if config.Web3SignerURL == "" {
+		config.Web3SignerURL = DefaultWeb3SignerURL // DEFAULT: http://localhost:9000
 	}
 	if config.KeyDataDir == "" {
 		config.KeyDataDir = DefaultKeyDataDir
@@ -245,10 +272,11 @@ func (m *CryfteeManager) Start(ctx context.Context) error {
 		return err
 	}
 
-	// Step 3: Build command with verified hash in environment
+	// Step 3: Build command with verified hash in the environment
 	m.process = exec.CommandContext(ctx, m.config.BinaryPath, m.config.Args...)
 
-	// Set up environment with verified hash
+	// Set up environment with verified hash and transport config
+	// These values MUST match what cryftee expects
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("%s=%s", CryfteeVerifiedBinaryHashEnv, hash))
 	env = append(env, fmt.Sprintf("CRYFTEE_API_TRANSPORT=%s", m.config.Transport))
@@ -257,6 +285,11 @@ func (m *CryfteeManager) Start(ctx context.Context) error {
 		env = append(env, fmt.Sprintf("CRYFTEE_UDS_PATH=%s", m.config.SocketPath))
 	} else {
 		env = append(env, fmt.Sprintf("CRYFTEE_HTTP_ADDR=%s", m.config.HTTPAddr))
+	}
+
+	// Pass Web3Signer URL
+	if m.config.Web3SignerURL != "" {
+		env = append(env, fmt.Sprintf("CRYFTEE_WEB3SIGNER_URL=%s", m.config.Web3SignerURL))
 	}
 
 	// Pass Web3Signer configuration if enabled
@@ -283,9 +316,18 @@ func (m *CryfteeManager) Start(ctx context.Context) error {
 		zap.Int("pid", m.process.Process.Pid),
 		zap.String("verifiedHash", m.verifiedHash),
 		zap.String("transport", string(m.config.Transport)),
+		zap.String("socketPath", m.config.SocketPath),
+		zap.String("httpAddr", m.config.HTTPAddr),
+		zap.String("web3SignerURL", m.config.Web3SignerURL),
 	)
 
 	m.initHTTPClient()
+
+	// Step 5: Verify connection is working
+	if err := m.verifyConnection(ctx); err != nil {
+		_ = m.process.Process.Kill()
+		return fmt.Errorf("cryftee connection verification failed: %w", err)
+	}
 
 	if err := m.waitForReady(ctx); err != nil {
 		_ = m.process.Process.Kill()
@@ -298,6 +340,47 @@ func (m *CryfteeManager) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// verifyConnection verifies that we can connect to cryftee via the configured transport
+func (m *CryfteeManager) verifyConnection(ctx context.Context) error {
+	deadline := time.Now().Add(m.config.StartupTimeout)
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		switch m.config.Transport {
+		case TransportUDS:
+			// Check if socket file exists and we can connect
+			if _, err := os.Stat(m.config.SocketPath); err == nil {
+				conn, err := net.Dial("unix", m.config.SocketPath)
+				if err == nil {
+					conn.Close()
+					m.log.Info("UDS connection verified",
+						zap.String("socket", m.config.SocketPath),
+					)
+					return nil
+				}
+			}
+		case TransportHTTP, TransportHTTPS:
+			// Try HTTP health check
+			resp, err := m.callAPI(ctx, http.MethodGet, "/v1/staking/status", nil)
+			if err == nil {
+				resp.Body.Close()
+				m.log.Info("HTTP connection verified",
+					zap.String("addr", m.config.HTTPAddr),
+				)
+				return nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("failed to connect to cryftee via %s after %v", m.config.Transport, m.config.StartupTimeout)
 }
 
 func (m *CryfteeManager) waitForReady(ctx context.Context) error {

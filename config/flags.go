@@ -249,7 +249,7 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.String(StakingSignerKeyContentKey, "", "Specifies base64 encoded signer private key for staking")
 
 	// Runtime / Cryftee sidecar
-	fs.String(RuntimeCryfteeURLKey, "", "URL of the Cryftee runtime sidecar (e.g., http://127.0.0.1:8765)")
+	fs.String(RuntimeCryfteeHTTPAddrKey, "", "URL of the Cryftee runtime sidecar (e.g., http://127.0.0.1:8765)")
 	fs.Duration(RuntimeCryfteeTimeoutKey, 5*time.Second, "HTTP timeout for Cryftee runtime calls")
 	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable Cryftee runtime integration")
 
@@ -378,6 +378,13 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.StringToString(TracingHeadersKey, map[string]string{}, "The headers to provide the trace indexer")
 
 	fs.String(ProcessContextFileKey, defaultProcessContextPath, "The path to write process context to (including PID, API URI, and staking address).")
+
+	// Cryftee Runtime Info
+	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable Cryftee runtime info client")
+	fs.String(RuntimeCryfteeTransportKey, DefaultCryfteeTransport, "Transport for Cryftee communication: 'uds' (default) or 'http'")
+	fs.String(RuntimeCryfteeSocketKey, DefaultCryfteeSocketPath, "Path to Cryftee UDS socket (when transport=uds)")
+	fs.String(RuntimeCryfteeHTTPAddrKey, DefaultCryfteeHTTPAddr, "HTTP address for Cryftee (when transport=http)")
+	fs.Duration(RuntimeCryfteeTimeoutKey, 10*time.Second, "Timeout for Cryftee requests")
 }
 
 // BuildFlagSet returns a complete set of flags for cryftgo

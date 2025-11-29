@@ -200,9 +200,14 @@ const (
 	TracingExporterTypeKey                             = "tracing-exporter-type"
 	TracingHeadersKey                                  = "tracing-headers"
 	ProcessContextFileKey                              = "process-context-file"
-	RuntimeCryfteeURLKey                               = "runtime-cryftee-url"
-	RuntimeCryfteeTimeoutKey                           = "runtime-cryftee-timeout"
-	RuntimeCryfteeEnabledKey                           = "runtime-cryftee-enabled"
+
+	// Cryftee runtime info client configuration
+	// By default, cryftee uses UDS at /var/run/cryftee.sock
+	RuntimeCryfteeEnabledKey   = "runtime-cryftee-enabled"
+	RuntimeCryfteeTransportKey = "runtime-cryftee-transport" // "uds" (default) or "http"
+	RuntimeCryfteeSocketKey    = "runtime-cryftee-socket"    // UDS path (default: /var/run/cryftee.sock)
+	RuntimeCryfteeHTTPAddrKey  = "runtime-cryftee-http-addr" // HTTP address (default: 127.0.0.1:8787)
+	RuntimeCryfteeTimeoutKey   = "runtime-cryftee-timeout"
 
 	// Cryftee binary management and attestation
 	CryfteeBinaryPathKey     = "cryftee-binary-path"
@@ -210,9 +215,26 @@ const (
 	CryfteeStartupTimeoutKey = "cryftee-startup-timeout"
 
 	// Web3Signer / Cryftee-backed staking BLS signing configuration.
-	// When enabled, the node is expected to delegate staking signatures to
-	// Cryftee, which in turn may use Web3Signer or other key management.
 	StakingWeb3SignerEnabledKey        = "staking-web3signer-enabled"
 	StakingWeb3SignerEphemeralKey      = "staking-web3signer-ephemeral"
 	StakingWeb3SignerKeyMaterialB64Key = "staking-web3signer-key-material"
+	StakingWeb3SignerURLKey            = "web3signer-url" // URL of Web3Signer instance
+)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED DEFAULTS - These MUST match between cryftgo and cryftee
+// ═══════════════════════════════════════════════════════════════════════════
+
+const (
+	// DefaultCryfteeTransport is the default transport type (UDS)
+	DefaultCryfteeTransport = "uds"
+
+	// DefaultCryfteeSocketPath is the default UDS socket path
+	DefaultCryfteeSocketPath = "/var/run/cryftee.sock"
+
+	// DefaultCryfteeHTTPAddr is the default HTTP address (only when transport=http)
+	DefaultCryfteeHTTPAddr = "127.0.0.1:8787"
+
+	// DefaultWeb3SignerURL is the default Web3Signer URL
+	DefaultWeb3SignerURL = "http://localhost:9000"
 )

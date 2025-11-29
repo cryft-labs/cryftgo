@@ -1261,10 +1261,19 @@ func New(
 			return nil, fmt.Errorf("--staking-web3signer-enabled requires --cryftee-binary-path to be set")
 		}
 
+		// Determine transport settings
+		transport := CryfteeTransport(config.RuntimeCryfteeTransport)
+		if transport == "" {
+			transport = TransportUDS
+		}
+
 		// Start managed cryftee sidecar
 		n.cryfteeManager = NewCryfteeManager(CryfteeManagerConfig{
 			BinaryPath:               config.CryfteeBinaryPath,
-			HTTPAddr:                 extractHostPort(config.RuntimeCryfteeURL),
+			Transport:                transport,
+			SocketPath:               config.RuntimeCryfteeSocket,
+			HTTPAddr:                 config.RuntimeCryfteeHTTPAddr,
+			Web3SignerURL:            config.Web3SignerURL,
 			StartupTimeout:           config.CryfteeStartupTimeout,
 			ExpectedHashes:           config.CryfteeExpectedHashes,
 			Web3SignerEnabled:        config.Web3SignerEnabled,
@@ -1274,14 +1283,6 @@ func New(
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-
-		if err := n.cryfteeManager.Start(ctx); err != nil {
-			return nil, fmt.Errorf("failed to start cryftee sidecar: %w", err)
-		}
-
-		logger.Info("cryftee sidecar started and attestation verified",
-			zap.String("verifiedHash", n.cryfteeManager.VerifiedHash()),
-		)
 
 		// Verify Web3Signer is connected and ready
 		status, err := n.cryfteeManager.VerifySignerReady(ctx)
@@ -1315,9 +1316,16 @@ func New(
 		// Cryftee binary specified but Web3Signer not enabled - just start for runtime info
 		logger.Info("starting cryftee for runtime info only (Web3Signer disabled)")
 
+		transport := CryfteeTransport(config.RuntimeCryfteeTransport)
+		if transport == "" {
+			transport = TransportUDS
+		}
+
 		n.cryfteeManager = NewCryfteeManager(CryfteeManagerConfig{
 			BinaryPath:     config.CryfteeBinaryPath,
-			HTTPAddr:       extractHostPort(config.RuntimeCryfteeURL),
+			Transport:      transport,
+			SocketPath:     config.RuntimeCryfteeSocket,
+			HTTPAddr:       config.RuntimeCryfteeHTTPAddr,
 			StartupTimeout: config.CryfteeStartupTimeout,
 			ExpectedHashes: config.CryfteeExpectedHashes,
 		}, logger)
@@ -1335,15 +1343,19 @@ func New(
 	}
 
 	// Runtime info client - only if explicitly enabled
-	if config.RuntimeCryfteeEnabled && config.RuntimeCryfteeURL != "" {
+	if config.RuntimeCryfteeEnabled {
 		logger.Info("initializing Cryftee runtime client",
-			zap.String("url", config.RuntimeCryfteeURL),
+			zap.String("transport", config.RuntimeCryfteeTransport),
+			zap.String("socket", config.RuntimeCryfteeSocket),
+			zap.String("httpAddr", config.RuntimeCryfteeHTTPAddr),
 			zap.Duration("timeout", config.RuntimeCryfteeTimeout),
 		)
-		n.runtimeClient = NewHTTPRuntimeInfoClient(
-			config.RuntimeCryfteeURL,
-			config.RuntimeCryfteeTimeout,
-		)
+		n.runtimeClient = NewRuntimeInfoClient(RuntimeInfoClientConfig{
+			Transport: config.RuntimeCryfteeTransport,
+			Socket:    config.RuntimeCryfteeSocket,
+			URL:       config.RuntimeCryfteeHTTPAddr,
+			Timeout:   config.RuntimeCryfteeTimeout,
+		})
 	}
 
 	n.DoneShuttingDown.Add(1)
