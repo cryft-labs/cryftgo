@@ -248,10 +248,6 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.String(StakingSignerKeyPathKey, defaultStakingSignerKeyPath, fmt.Sprintf("Path to the signer private key for staking. Ignored if %s is specified", StakingSignerKeyContentKey))
 	fs.String(StakingSignerKeyContentKey, "", "Specifies base64 encoded signer private key for staking")
 
-	// Runtime / Cryftee sidecar
-	fs.String(RuntimeCryfteeHTTPAddrKey, "", "URL of the Cryftee runtime sidecar (e.g., http://127.0.0.1:8765)")
-	fs.Duration(RuntimeCryfteeTimeoutKey, 5*time.Second, "HTTP timeout for Cryftee runtime calls")
-
 	// Cryftee binary management and attestation
 	fs.String(CryfteeBinaryPathKey, "", "Path to the Cryftee binary for managed startup")
 	fs.StringSlice(CryfteeExpectedHashesKey, nil, "Expected SHA256 hashes of trusted Cryftee binaries (hex-encoded)")
