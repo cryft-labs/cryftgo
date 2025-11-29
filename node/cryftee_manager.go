@@ -35,10 +35,10 @@ const (
 	// ═══════════════════════════════════════════════════════════════════════════
 
 	// DefaultCryfteeSocketPath is the default UDS socket path
-	DefaultCryfteeSocketPath = "/var/run/cryftee.sock"
+	DefaultCryfteeSocketPath = "/tmp/cryftee.sock"
 
 	// DefaultCryfteeHTTPAddr is the default HTTP address (only when transport=http)
-	DefaultCryfteeHTTPAddr = "127.0.0.1:8787"
+	DefaultCryfteeHTTPAddr = "127.0.0.1:8443"
 
 	// DefaultWeb3SignerURL is the default Web3Signer URL
 	DefaultWeb3SignerURL = "http://localhost:9000"

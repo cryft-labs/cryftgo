@@ -123,11 +123,11 @@ Transport type for connecting to Cryftee. Options are `uds` (Unix Domain Socket,
 
 #### `--runtime-cryftee-socket` (string)
 
-Path to the Cryftee UDS socket when using `--runtime-cryftee-transport=uds`. Defaults to `/var/run/cryftee.sock`.
+Path to the Cryftee UDS socket when using `--runtime-cryftee-transport=uds`. Defaults to `/tmp/cryftee.sock`.
 
 #### `--runtime-cryftee-http-addr` (string)
 
-HTTP address for Cryftee when using `--runtime-cryftee-transport=http`. Format: `host:port`. Defaults to `127.0.0.1:8787`.
+HTTP address for Cryftee when using `--runtime-cryftee-transport=http`. Format: `host:port`. Defaults to `127.0.0.1:8443`.
 
 #### `--runtime-cryftee-timeout` (duration)
 

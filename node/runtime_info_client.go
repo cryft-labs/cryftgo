@@ -31,6 +31,7 @@ type RuntimeInfoClientConfig struct {
 type runtimeInfoClient struct {
 	httpClient *http.Client
 	transport  string
+	socket     string
 	url        string
 }
 
@@ -46,6 +47,11 @@ func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 		transport = "uds"
 	}
 
+	socket := config.Socket
+	if socket == "" {
+		socket = DefaultCryfteeSocketPath // /tmp/cryftee.sock
+	}
+
 	var httpClient *http.Client
 	switch transport {
 	case "uds":
@@ -53,7 +59,7 @@ func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 			Timeout: timeout,
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", config.Socket)
+					return net.Dial("unix", socket)
 				},
 			},
 		}
@@ -64,6 +70,7 @@ func NewRuntimeInfoClient(config RuntimeInfoClientConfig) RuntimeInfoClient {
 	return &runtimeInfoClient{
 		httpClient: httpClient,
 		transport:  transport,
+		socket:     socket,
 		url:        config.URL,
 	}
 }
@@ -75,7 +82,7 @@ func (c *runtimeInfoClient) GetRuntimeInfo(ctx context.Context) (*runtimeinfo.Ru
 	case "uds":
 		// For UDS, we use http://localhost as a placeholder host
 		// The actual connection goes through the unix socket
-		// IMPORTANT: cryftee API uses /v1 prefix
+		// CryftTEE API uses /v1 prefix
 		url = "http://localhost/v1/runtime/self"
 	case "https":
 		url = "https://" + c.url + "/v1/runtime/self"
