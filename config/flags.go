@@ -386,13 +386,6 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.StringToString(TracingHeadersKey, map[string]string{}, "The headers to provide the trace indexer")
 
 	fs.String(ProcessContextFileKey, defaultProcessContextPath, "The path to write process context to (including PID, API URI, and staking address).")
-
-	// Cryftee Runtime Info
-	fs.Bool(RuntimeCryfteeEnabledKey, false, "Enable Cryftee runtime info client")
-	fs.String(RuntimeCryfteeTransportKey, DefaultCryfteeTransport, "Transport for Cryftee communication: 'uds' (default) or 'http'")
-	fs.String(RuntimeCryfteeSocketKey, DefaultCryfteeSocketPath, "Path to Cryftee UDS socket (when transport=uds)")
-	fs.String(RuntimeCryfteeHTTPAddrKey, DefaultCryfteeHTTPAddr, "HTTP address for Cryftee (when transport=http)")
-	fs.Duration(RuntimeCryfteeTimeoutKey, 10*time.Second, "Timeout for Cryftee requests")
 }
 
 // BuildFlagSet returns a complete set of flags for cryftgo
