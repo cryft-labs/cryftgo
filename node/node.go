@@ -1266,7 +1266,7 @@ func New(
 			transport = TransportUDS
 		}
 
-		// Start managed cryftee sidecar
+		// Create managed cryftee sidecar manager
 		n.cryfteeManager = NewCryfteeManager(CryfteeManagerConfig{
 			BinaryPath:               config.CryfteeBinaryPath,
 			Transport:                transport,
@@ -1278,10 +1278,16 @@ func New(
 			Web3SignerEnabled:        config.Web3SignerEnabled,
 			Web3SignerEphemeral:      config.Web3SignerEphemeral,
 			Web3SignerKeyMaterialB64: config.Web3SignerKeyMaterialB64,
+			KeyDataDir:               filepath.Join(config.DatabaseConfig.Path, "..", "staking"),
 		}, logger)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), config.CryfteeStartupTimeout)
 		defer cancel()
+
+		// Start cryftee if we're managing the binary
+		if err := n.cryfteeManager.Start(ctx); err != nil {
+			return nil, fmt.Errorf("failed to start cryftee: %w", err)
+		}
 
 		// Verify Web3Signer is connected and ready
 		status, err := n.cryfteeManager.VerifySignerReady(ctx)
@@ -1290,7 +1296,8 @@ func New(
 			return nil, fmt.Errorf("Web3Signer not ready: %w", err)
 		}
 
-		// Initialize keys - cryftgo decides when to generate based on status
+		// Initialize keys using the new verify/generate flow
+		// CryftGo's local store is authoritative - verify existing or generate new
 		blsKeyInfo, tlsKeyInfo, err := n.cryfteeManager.InitKeys(ctx, status)
 		if err != nil {
 			_ = n.cryfteeManager.Stop()
@@ -1298,7 +1305,6 @@ func New(
 		}
 
 		// Parse NodeID from the TLS key info
-		// The NodeID format is "NodeID-<hex>" so we need to parse it
 		nodeID, err := ids.NodeIDFromString(tlsKeyInfo.NodeID)
 		if err != nil {
 			_ = n.cryfteeManager.Stop()
@@ -1308,9 +1314,12 @@ func New(
 		n.ID = nodeID
 		logger.Info("node identity obtained from cryftee/Web3Signer",
 			zap.Stringer("nodeID", n.ID),
-			zap.String("blsPubkey", blsKeyInfo.PublicKey),
-			zap.String("tlsPubkey", tlsKeyInfo.PublicKey),
+			zap.String("blsPubkey", truncateKey(blsKeyInfo.PublicKey)),
+			zap.String("tlsPubkey", truncateKey(tlsKeyInfo.PublicKey)),
 		)
+
+		// Start heartbeat goroutine
+		go n.startCryfteeHeartbeat()
 	} else if config.CryfteeBinaryPath != "" {
 		// Cryftee binary specified but Web3Signer not enabled - just start for runtime info
 		logger.Info("starting cryftee for runtime info only (Web3Signer disabled)")
@@ -1879,10 +1888,26 @@ func (n *Node) initCryfttee() error {
 	return nil
 }
 
-// truncateKey returns a truncated version of a key for logging
-func truncateKey(key string) string {
-	if len(key) <= 16 {
-		return key
+// startCryfteeHeartbeat sends periodic heartbeats to CryftTEE
+func (n *Node) startCryfteeHeartbeat() {
+	if n.cryfteeManager == nil {
+		return
 	}
-	return key[:16] + "..."
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if n.shuttingDown.Get() {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := n.cryfteeManager.SendHeartbeat(ctx, n.ID.String(), version.CurrentApp.String()); err != nil {
+				n.Log.Warn("CryftTEE heartbeat failed", zap.Error(err))
+			}
+			cancel()
+		}
+	}
 }
