@@ -249,9 +249,8 @@ type StakingConfig struct {
 	//   - Web3SignerKeyMaterialB64: optional base64-encoded BLS secret key
 	//     material to hand to Cryftee/Web3Signer for import. Empty means
 	//     "let Web3Signer manage its own persisted keys".
-	Web3SignerEnabled        bool        `json:"web3SignerEnabled"`
-	Web3SignerEphemeral      bool        `json:"web3SignerEphemeral"`
-	Web3SignerKeyMaterialB64 string      `json:"web3SignerKeyMaterialB64"`
-	Web3SignerURL            string      `json:"web3SignerURL"`
-	RemoteTLSSigner          interface{} `json:"-"` // node.RemoteTLSSigner when enabled
+	Web3SignerEnabled        bool   `json:"web3SignerEnabled"`
+	Web3SignerEphemeral      bool   `json:"web3SignerEphemeral"`
+	Web3SignerKeyMaterialB64 string `json:"web3SignerKeyMaterialB64"`
+	Web3SignerURL            string `json:"web3SignerURL"`
 }

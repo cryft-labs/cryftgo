@@ -1911,3 +1911,11 @@ func (n *Node) startCryfteeHeartbeat() {
 		}
 	}
 }
+
+// truncateKey returns a truncated version of a key for logging
+func truncateKey(key string) string {
+	if len(key) <= 20 {
+		return key
+	}
+	return key[:20] + "..."
+}

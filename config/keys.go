@@ -226,15 +226,21 @@ const (
 // ═══════════════════════════════════════════════════════════════════════════
 
 const (
-	// DefaultCryfteeTransport is the default transport type (UDS)
+	// DefaultCryfteeTransport is the default transport for cryftee communication
 	DefaultCryfteeTransport = "uds"
 
 	// DefaultCryfteeSocketPath is the default UDS socket path
 	DefaultCryfteeSocketPath = "/tmp/cryftee.sock"
 
-	// DefaultCryfteeHTTPAddr is the default HTTP address (only when transport=http)
+	// DefaultCryfteeHTTPAddr is the default HTTP address (when transport=http)
 	DefaultCryfteeHTTPAddr = "127.0.0.1:8443"
 
 	// DefaultWeb3SignerURL is the default Web3Signer URL
 	DefaultWeb3SignerURL = "http://localhost:9000"
+
+	// DefaultCryfteeTimeout is the default timeout for cryftee requests
+	DefaultCryfteeTimeout = "10s"
+
+	// DefaultCryfteeStartupTimeout is the default timeout for cryftee startup
+	DefaultCryfteeStartupTimeout = "30s"
 )

@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -30,28 +29,17 @@ const (
 	// reads to obtain the externally-verified binary hash for attestation.
 	CryfteeVerifiedBinaryHashEnv = "CRYFTEE_VERIFIED_BINARY_HASH"
 
-	// ═══════════════════════════════════════════════════════════════════════════
-	// SHARED DEFAULTS - These MUST match between cryftgo and cryftee
-	// ═══════════════════════════════════════════════════════════════════════════
-
-	// DefaultCryfteeSocketPath is the default UDS socket path
-	DefaultCryfteeSocketPath = "/tmp/cryftee.sock"
-
-	// DefaultCryfteeHTTPAddr is the default HTTP address (only when transport=http)
-	DefaultCryfteeHTTPAddr = "127.0.0.1:8443"
-
-	// DefaultWeb3SignerURL is the default Web3Signer URL
-	DefaultWeb3SignerURL = "http://localhost:9000"
-
-	// Timeouts
+	// Timeouts - use config defaults but keep internal constants for clarity
 	defaultCryfteeStartupTimeout = 30 * time.Second
 	defaultCryfteeHTTPTimeout    = 30 * time.Second
 
 	// Key data directory for persisting key metadata
 	DefaultKeyDataDir = "/var/lib/cryftgo/keys"
 
-	// DefaultCryfteeBinaryPath is empty - users must explicitly set --cryftee-binary-path
-	DefaultCryfteeBinaryPath = ""
+	// Cryftee default configuration values
+	DefaultCryfteeSocketPath = "/tmp/cryftee.sock"
+	DefaultCryfteeHTTPAddr   = "127.0.0.1:8443"
+	DefaultWeb3SignerURL     = "http://localhost:9000"
 )
 
 // CryfteeTransport defines the transport type for cryftee communication.
@@ -151,41 +139,41 @@ type CryfteeManager struct {
 }
 
 // NewCryfteeManager creates a new CryfteeManager with the given configuration.
-func NewCryfteeManager(config CryfteeManagerConfig, log logging.Logger) *CryfteeManager {
-	// Apply defaults - MUST match cryftee's defaults
-	if config.StartupTimeout == 0 {
-		config.StartupTimeout = defaultCryfteeStartupTimeout
+func NewCryfteeManager(cfg CryfteeManagerConfig, log logging.Logger) *CryfteeManager {
+	// Apply defaults from config package
+	if cfg.StartupTimeout == 0 {
+		cfg.StartupTimeout = defaultCryfteeStartupTimeout
 	}
-	if config.Transport == "" {
-		config.Transport = TransportUDS // DEFAULT: Unix Domain Socket
+	if cfg.Transport == "" {
+		cfg.Transport = TransportUDS // DEFAULT: Unix Domain Socket
 	}
-	if config.SocketPath == "" {
-		config.SocketPath = DefaultCryfteeSocketPath // DEFAULT: /tmp/cryftee.sock
+	if cfg.Transport == "" {
+		cfg.Transport = TransportUDS // DEFAULT: Unix Domain Socket
 	}
-	if config.HTTPAddr == "" {
-		config.HTTPAddr = DefaultCryfteeHTTPAddr // DEFAULT: 127.0.0.1:8443
+	if cfg.SocketPath == "" {
+		cfg.SocketPath = DefaultCryfteeSocketPath // DEFAULT: /tmp/cryftee.sock
 	}
-	if config.Web3SignerURL == "" {
-		config.Web3SignerURL = DefaultWeb3SignerURL // DEFAULT: http://localhost:9000
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = DefaultCryfteeHTTPAddr // DEFAULT: 127.0.0.1:8443
 	}
-	if config.KeyDataDir == "" {
-		config.KeyDataDir = DefaultKeyDataDir
+	if cfg.Web3SignerURL == "" {
+		cfg.Web3SignerURL = DefaultWeb3SignerURL // DEFAULT: http://localhost:9000
 	}
 
 	// Log configuration for debugging
 	log.Info("initializing CryfteeManager",
-		zap.String("transport", string(config.Transport)),
-		zap.String("socketPath", config.SocketPath),
-		zap.String("httpAddr", config.HTTPAddr),
-		zap.String("web3SignerURL", config.Web3SignerURL),
-		zap.String("keyDataDir", config.KeyDataDir),
-		zap.Duration("startupTimeout", config.StartupTimeout),
-		zap.Bool("web3SignerEnabled", config.Web3SignerEnabled),
-		zap.String("binaryPath", config.BinaryPath),
+		zap.String("transport", string(cfg.Transport)),
+		zap.String("socketPath", cfg.SocketPath),
+		zap.String("httpAddr", cfg.HTTPAddr),
+		zap.String("web3SignerURL", cfg.Web3SignerURL),
+		zap.String("keyDataDir", cfg.KeyDataDir),
+		zap.Duration("startupTimeout", cfg.StartupTimeout),
+		zap.Bool("web3SignerEnabled", cfg.Web3SignerEnabled),
+		zap.String("binaryPath", cfg.BinaryPath),
 	)
 
 	return &CryfteeManager{
-		config: config,
+		config: cfg,
 		log:    log,
 	}
 }
@@ -444,391 +432,6 @@ func (m *CryfteeManager) VerifyAttestation(ctx context.Context) error {
 	)
 
 	return nil
-}
-
-// InitBLSKey initializes or loads an existing BLS key.
-func (m *CryfteeManager) InitBLSKey(ctx context.Context) (*BLSKeyInfo, error) {
-	if key, err := m.loadExistingBLSKey(ctx); err == nil && key != nil {
-		m.log.Info("using existing BLS key", zap.String("pubkey", key.PublicKey))
-		return key, nil
-	}
-
-	req := map[string]interface{}{"key_type": "BLS", "purpose": "validator"}
-	body, _ := json.Marshal(req)
-
-	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/bls/register", body)
-	if err != nil {
-		return nil, fmt.Errorf("BLS key generation failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("BLS key registration returned status %d", resp.StatusCode)
-	}
-
-	var result struct {
-		PublicKey  string `json:"pubkey"`
-		SecretPath string `json:"secret_path"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	keyInfo := &BLSKeyInfo{PublicKey: result.PublicKey, SecretPath: result.SecretPath, CreatedAt: time.Now().Unix()}
-	_ = m.saveBLSKeyInfo(keyInfo)
-	m.log.Info("generated new BLS key", zap.String("pubkey", keyInfo.PublicKey))
-	return keyInfo, nil
-}
-
-// InitTLSKey initializes or loads an existing TLS key.
-// Returns an error if the key cannot be obtained - this is a critical failure
-// when Web3Signer mode is enabled as the node cannot determine its identity.
-func (m *CryfteeManager) InitTLSKey(ctx context.Context) (*TLSKeyInfo, error) {
-	// Try to load existing key first
-	if key, err := m.loadExistingTLSKey(); err == nil && key != nil {
-		// Verify the key still exists in Web3Signer
-		if err := m.verifyTLSKeyExists(ctx, key.PublicKey); err != nil {
-			m.log.Warn("cached TLS key no longer exists in Web3Signer, will register new one",
-				zap.String("nodeID", key.NodeID),
-				zap.Error(err),
-			)
-		} else {
-			m.log.Info("using existing TLS key", zap.String("nodeID", key.NodeID))
-			return key, nil
-		}
-	}
-
-	// Register new TLS key
-	req := map[string]interface{}{"key_type": "SECP256K1", "purpose": "node_tls"}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal TLS register request: %w", err)
-	}
-
-	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/tls/register", body)
-	if err != nil {
-		return nil, fmt.Errorf("TLS key registration request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("TLS key registration returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var result struct {
-		PublicKey   string `json:"pubkey"`
-		SecretPath  string `json:"secret_path"`
-		Certificate string `json:"certificate"`
-		NodeID      string `json:"node_id,omitempty"` // Cryftee may compute this
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode TLS register response: %w", err)
-	}
-
-	if result.PublicKey == "" {
-		return nil, fmt.Errorf("TLS registration returned empty public key")
-	}
-
-	// Derive NodeID if not provided by cryftee
-	nodeID := result.NodeID
-	if nodeID == "" {
-		nodeID = deriveNodeID(result.PublicKey)
-	}
-
-	keyInfo := &TLSKeyInfo{
-		PublicKey:   result.PublicKey,
-		NodeID:      nodeID,
-		SecretPath:  result.SecretPath,
-		Certificate: result.Certificate,
-		CreatedAt:   time.Now().Unix(),
-	}
-
-	if err := m.saveTLSKeyInfo(keyInfo); err != nil {
-		m.log.Warn("failed to cache TLS key info", zap.Error(err))
-	}
-
-	m.log.Info("generated new TLS key via Web3Signer",
-		zap.String("nodeID", keyInfo.NodeID),
-		zap.String("pubkey", keyInfo.PublicKey),
-	)
-	return keyInfo, nil
-}
-
-// verifyTLSKeyExists checks if a TLS key still exists in Web3Signer
-func (m *CryfteeManager) verifyTLSKeyExists(ctx context.Context, pubkey string) error {
-	req := map[string]interface{}{"pubkey": pubkey}
-	body, _ := json.Marshal(req)
-
-	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/tls/verify", body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("key verification failed with status %d", resp.StatusCode)
-	}
-	return nil
-}
-
-func deriveNodeID(pubkeyHex string) string {
-	pubkey := strings.TrimPrefix(pubkeyHex, "0x")
-	pubkeyBytes, _ := hex.DecodeString(pubkey)
-	hash := sha256.Sum256(pubkeyBytes)
-	return fmt.Sprintf("NodeID-%s", hex.EncodeToString(hash[:20]))
-}
-
-func (m *CryfteeManager) saveBLSKeyInfo(key *BLSKeyInfo) error {
-	_ = os.MkdirAll(m.config.KeyDataDir, 0700)
-	data, _ := json.MarshalIndent(key, "", "  ")
-	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "bls_key.json"), data, 0600)
-}
-
-func (m *CryfteeManager) loadExistingBLSKey(ctx context.Context) (*BLSKeyInfo, error) {
-	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "bls_key.json"))
-	if err != nil {
-		return nil, err
-	}
-	var key BLSKeyInfo
-	if err := json.Unmarshal(data, &key); err != nil {
-		return nil, err
-	}
-	// Verify key still exists in Web3Signer
-	resp, err := m.callAPI(ctx, http.MethodGet, "/v1/staking/status", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	return &key, nil
-}
-
-func (m *CryfteeManager) saveTLSKeyInfo(key *TLSKeyInfo) error {
-	_ = os.MkdirAll(m.config.KeyDataDir, 0700)
-	data, _ := json.MarshalIndent(key, "", "  ")
-	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "tls_key.json"), data, 0600)
-}
-
-func (m *CryfteeManager) loadExistingTLSKey() (*TLSKeyInfo, error) {
-	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "tls_key.json"))
-	if err != nil {
-		return nil, err
-	}
-	var key TLSKeyInfo
-	return &key, json.Unmarshal(data, &key)
-}
-
-// saveBLSPubkey persists the BLS public key reference locally
-func (m *CryfteeManager) saveBLSPubkey(pubkey string) error {
-	if err := os.MkdirAll(m.config.KeyDataDir, 0700); err != nil {
-		return fmt.Errorf("failed to create key data dir: %w", err)
-	}
-	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "bls_pubkey"), []byte(pubkey), 0600)
-}
-
-// loadSavedBLSPubkey loads the previously saved BLS public key
-func (m *CryfteeManager) loadSavedBLSPubkey() string {
-	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "bls_pubkey"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-// saveTLSPubkey persists the TLS public key reference locally
-func (m *CryfteeManager) saveTLSPubkey(pubkey string) error {
-	if err := os.MkdirAll(m.config.KeyDataDir, 0700); err != nil {
-		return fmt.Errorf("failed to create key data dir: %w", err)
-	}
-	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "tls_pubkey"), []byte(pubkey), 0600)
-}
-
-// loadSavedTLSPubkey loads the previously saved TLS public key
-func (m *CryfteeManager) loadSavedTLSPubkey() string {
-	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "tls_pubkey"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-// SignBLS signs data using the BLS key via cryftee.
-func (m *CryfteeManager) SignBLS(ctx context.Context, pubkey string, data []byte, sigType string) ([]byte, error) {
-	req := map[string]interface{}{"pubkey": pubkey, "data": data, "type": sigType}
-	body, _ := json.Marshal(req)
-	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/bls/sign", body)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var result struct {
-		Signature []byte `json:"signature"`
-	}
-	json.NewDecoder(resp.Body).Decode(&result)
-	return result.Signature, nil
-}
-
-// SignTLS signs data using the TLS key via cryftee.
-func (m *CryfteeManager) SignTLS(ctx context.Context, pubkey string, data []byte) ([]byte, error) {
-	req := map[string]interface{}{"pubkey": pubkey, "data": data}
-	body, _ := json.Marshal(req)
-	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/tls/sign", body)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var result struct {
-		Signature []byte `json:"signature"`
-	}
-	json.NewDecoder(resp.Body).Decode(&result)
-	return result.Signature, nil
-}
-
-// VerifyRunningBinary re-verifies the running binary via /proc/<pid>/exe.
-// This is only supported on Linux.
-func (m *CryfteeManager) VerifyRunningBinary() error {
-	if runtime.GOOS != "linux" {
-		m.log.Debug("running binary verification only supported on Linux")
-		return nil
-	}
-
-	if m.process == nil || m.process.Process == nil {
-		return fmt.Errorf("cryftee process not running")
-	}
-
-	exePath := fmt.Sprintf("/proc/%d/exe", m.process.Process.Pid)
-
-	data, err := os.ReadFile(exePath)
-	if err != nil {
-		return fmt.Errorf("failed to read running binary: %w", err)
-	}
-
-	actualHash := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
-	if actualHash != m.verifiedHash {
-		return fmt.Errorf("running binary hash mismatch: expected %s, got %s",
-			m.verifiedHash, actualHash)
-	}
-
-	m.log.Debug("running binary re-verification passed",
-		zap.String("hash", actualHash),
-	)
-
-	return nil
-}
-
-// Stop gracefully stops the cryftee process.
-func (m *CryfteeManager) Stop() error {
-	if m.process == nil || m.process.Process == nil {
-		return nil
-	}
-
-	m.log.Info("stopping cryftee sidecar",
-		zap.Int("pid", m.process.Process.Pid),
-	)
-
-	if err := m.process.Process.Signal(os.Interrupt); err != nil {
-		m.log.Warn("failed to send interrupt to cryftee; killing",
-			zap.Error(err),
-		)
-		return m.process.Process.Kill()
-	}
-
-	// Wait for process to exit
-	done := make(chan error, 1)
-	go func() {
-		done <- m.process.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			m.log.Warn("cryftee exited with error",
-				zap.Error(err),
-			)
-		}
-		return err
-	case <-time.After(10 * time.Second):
-		m.log.Warn("cryftee did not exit gracefully; killing")
-		return m.process.Process.Kill()
-	}
-}
-
-// VerifiedHash returns the computed and verified binary hash.
-func (m *CryfteeManager) VerifiedHash() string {
-	return m.verifiedHash
-}
-
-// IsRunning returns true if the cryftee process is currently running.
-func (m *CryfteeManager) IsRunning() bool {
-	if m.process == nil || m.process.Process == nil {
-		return false
-	}
-
-	// Check if process is still running
-	if runtime.GOOS == "windows" {
-		// On Windows, we can't easily check without waiting
-		return true
-	}
-
-	// On Unix, sending signal 0 checks if process exists
-	return m.process.Process.Signal(os.Signal(nil)) == nil
-}
-
-// StakingStatus represents the response from /v1/staking/status
-type StakingStatus struct {
-	Ready         bool     `json:"ready"`
-	Web3SignerURL string   `json:"web3signer_url"`
-	Web3SignerOK  bool     `json:"web3signer_connected"`
-	BLSPubkeys    []string `json:"bls_pubkeys"`
-	TLSPubkeys    []string `json:"tls_pubkeys"`
-	ModuleVersion string   `json:"module_version"`
-	Capabilities  []string `json:"capabilities"`
-}
-
-// GetStakingStatus queries cryftee for available keys from Web3Signer
-func (m *CryfteeManager) GetStakingStatus(ctx context.Context) (*StakingStatus, error) {
-	resp, err := m.callAPI(ctx, http.MethodGet, "/v1/staking/status", nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get staking status: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("staking status returned %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var status StakingStatus
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return nil, fmt.Errorf("failed to decode staking status: %w", err)
-	}
-
-	return &status, nil
-}
-
-// VerifySignerReady checks that cryftee has Web3Signer module enabled and connected
-func (m *CryfteeManager) VerifySignerReady(ctx context.Context) (*StakingStatus, error) {
-	status, err := m.GetStakingStatus(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	if !status.Ready {
-		return nil, fmt.Errorf("staking module not ready")
-	}
-
-	if !status.Web3SignerOK {
-		return nil, fmt.Errorf("Web3Signer not connected (url: %s)", status.Web3SignerURL)
-	}
-
-	m.log.Info("Web3Signer ready",
-		zap.String("url", status.Web3SignerURL),
-		zap.String("moduleVersion", status.ModuleVersion),
-		zap.Int("blsKeys", len(status.BLSPubkeys)),
-		zap.Int("tlsKeys", len(status.TLSPubkeys)),
-	)
-
-	return status, nil
 }
 
 // InitKeys verifies existing keys or generates new ones based on CryftGo's local store.
@@ -1126,115 +729,215 @@ type ConnectionStatus struct {
 	SignerReady    bool      `json:"signer_ready"`
 }
 
-// truncateKey returns a truncated version of a key for logging
-func truncateKey(key string) string {
-	if len(key) <= 20 {
-		return key
-	}
-	return key[:20] + "..."
+// StakingStatus represents the response from /v1/staking/status
+type StakingStatus struct {
+	Ready         bool     `json:"ready"`
+	Web3SignerURL string   `json:"web3signer_url"`
+	Web3SignerOK  bool     `json:"web3signer_connected"`
+	BLSPubkeys    []string `json:"bls_pubkeys"`
+	TLSPubkeys    []string `json:"tls_pubkeys"`
+	ModuleVersion string   `json:"module_version"`
+	Capabilities  []string `json:"capabilities"`
 }
 
-// withRetry executes an operation with exponential backoff retry.
-func (m *CryfteeManager) withRetry(ctx context.Context, operation func() error) error {
-	backoff := 100 * time.Millisecond
-	maxBackoff := 5 * time.Second
-	maxAttempts := 10
+// GetStakingStatus queries cryftee for available keys from Web3Signer
+func (m *CryfteeManager) GetStakingStatus(ctx context.Context) (*StakingStatus, error) {
+	resp, err := m.callAPI(ctx, http.MethodGet, "/v1/staking/status", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get staking status: %w", err)
+	}
+	defer resp.Body.Close()
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err := operation()
-		if err == nil {
-			return nil
-		}
-
-		if attempt == maxAttempts {
-			return fmt.Errorf("operation failed after %d attempts: %w", maxAttempts, err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		m.log.Warn("CryftTEE operation failed, retrying",
-			zap.Int("attempt", attempt),
-			zap.Error(err),
-			zap.Duration("backoff", backoff),
-		)
-
-		time.Sleep(backoff)
-		if backoff < maxBackoff {
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("staking status returned %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	var status StakingStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("failed to decode staking status: %w", err)
+	}
+
+	return &status, nil
+}
+
+// VerifySignerReady checks that cryftee has Web3Signer module enabled and connected
+func (m *CryfteeManager) VerifySignerReady(ctx context.Context) (*StakingStatus, error) {
+	status, err := m.GetStakingStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !status.Ready {
+		return nil, fmt.Errorf("staking module not ready")
+	}
+
+	if !status.Web3SignerOK {
+		return nil, fmt.Errorf("Web3Signer not connected (url: %s)", status.Web3SignerURL)
+	}
+
+	m.log.Info("Web3Signer ready",
+		zap.String("url", status.Web3SignerURL),
+		zap.String("moduleVersion", status.ModuleVersion),
+		zap.Int("blsKeys", len(status.BLSPubkeys)),
+		zap.Int("tlsKeys", len(status.TLSPubkeys)),
+	)
+
+	return status, nil
+}
+
+// deriveNodeID derives a NodeID from a hex-encoded public key
+func deriveNodeID(pubkeyHex string) string {
+	pubkey := strings.TrimPrefix(pubkeyHex, "0x")
+	pubkeyBytes, err := hex.DecodeString(pubkey)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256(pubkeyBytes)
+	return fmt.Sprintf("NodeID-%s", hex.EncodeToString(hash[:20]))
+}
+
+// saveBLSPubkey persists the BLS public key reference locally
+func (m *CryfteeManager) saveBLSPubkey(pubkey string) error {
+	if err := os.MkdirAll(m.config.KeyDataDir, 0700); err != nil {
+		return fmt.Errorf("failed to create key data dir: %w", err)
+	}
+	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "bls_pubkey"), []byte(pubkey), 0600)
+}
+
+// loadSavedBLSPubkey loads the previously saved BLS public key
+func (m *CryfteeManager) loadSavedBLSPubkey() string {
+	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "bls_pubkey"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// saveTLSPubkey persists the TLS public key reference locally
+func (m *CryfteeManager) saveTLSPubkey(pubkey string) error {
+	if err := os.MkdirAll(m.config.KeyDataDir, 0700); err != nil {
+		return fmt.Errorf("failed to create key data dir: %w", err)
+	}
+	return os.WriteFile(filepath.Join(m.config.KeyDataDir, "tls_pubkey"), []byte(pubkey), 0600)
+}
+
+// loadSavedTLSPubkey loads the previously saved TLS public key
+func (m *CryfteeManager) loadSavedTLSPubkey() string {
+	data, err := os.ReadFile(filepath.Join(m.config.KeyDataDir, "tls_pubkey"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// SignBLS signs data using the BLS key via cryftee.
+func (m *CryfteeManager) SignBLS(ctx context.Context, pubkey string, data []byte, sigType string) ([]byte, error) {
+	req := map[string]interface{}{
+		"pubkey": pubkey,
+		"data":   data,
+		"type":   sigType,
+	}
+	body, _ := json.Marshal(req)
+
+	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/bls/sign", body)
+	if err != nil {
+		return nil, fmt.Errorf("BLS sign request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("BLS sign returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode BLS sign response: %w", err)
+	}
+
+	return hex.DecodeString(strings.TrimPrefix(result.Signature, "0x"))
+}
+
+// SignTLS signs data using the TLS key via cryftee.
+func (m *CryfteeManager) SignTLS(ctx context.Context, pubkey string, data []byte) ([]byte, error) {
+	req := map[string]interface{}{
+		"pubkey": pubkey,
+		"data":   data,
+	}
+	body, _ := json.Marshal(req)
+
+	resp, err := m.callAPI(ctx, http.MethodPost, "/v1/staking/tls/sign", body)
+	if err != nil {
+		return nil, fmt.Errorf("TLS sign request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("TLS sign returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode TLS sign response: %w", err)
+	}
+
+	return hex.DecodeString(strings.TrimPrefix(result.Signature, "0x"))
+}
+
+// Stop gracefully stops the cryftee process.
+func (m *CryfteeManager) Stop() error {
+	if m.process == nil {
+		return nil
+	}
+
+	// Attempt graceful shutdown
+	if err := m.process.Process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("failed to send interrupt signal to cryftee: %w", err)
+	}
+
+	// Wait for process to exit
+	done := make(chan error)
+	go func() {
+		_, err := m.process.Process.Wait()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("cryftee did not exit cleanly: %w", err)
+		}
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timeout waiting for cryftee to exit")
+	}
+
+	m.process = nil
 	return nil
 }
 
-// WaitForSignerModule waits for the signer module to be loaded and ready.
-// This checks for BLS signing capability specifically.
-func (m *CryfteeManager) WaitForSignerModule(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+// VerifiedHash returns the computed and verified binary hash.
+func (m *CryfteeManager) VerifiedHash() string {
+	return m.verifiedHash
+}
 
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		status, err := m.GetStakingStatus(ctx)
-		if err != nil {
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-
-		// Check if signer module has BLS capability
-		for _, cap := range status.Capabilities {
-			if cap == "bls_sign" || cap == "BLS_SIGN" {
-				m.log.Info("Signer module ready",
-					zap.String("version", status.ModuleVersion),
-					zap.Strings("capabilities", status.Capabilities),
-				)
-				return nil
-			}
-		}
-
-		// Fallback: if Ready is true and Web3Signer is connected, consider it ready
-		if status.Ready && status.Web3SignerOK {
-			m.log.Info("Signer module ready (Web3Signer connected)",
-				zap.String("web3signerURL", status.Web3SignerURL),
-			)
-			return nil
-		}
-
-		time.Sleep(500 * time.Millisecond)
+// IsRunning returns true if the cryftee process is currently running.
+func (m *CryfteeManager) IsRunning() bool {
+	if m.process == nil {
+		return false
 	}
 
-	return fmt.Errorf("signer module not ready after %v", timeout)
-}
+	// Check if the process is still running
+	if err := m.process.Process.Signal(os.Interrupt); err != nil {
+		if err.Error() == "os: process already finished" {
+			return false
+		}
+	}
 
-// SignBLSWithRetry signs data using BLS with retry logic.
-func (m *CryfteeManager) SignBLSWithRetry(ctx context.Context, pubkey string, data []byte, sigType string) ([]byte, error) {
-	var signature []byte
-	err := m.withRetry(ctx, func() error {
-		var err error
-		signature, err = m.SignBLS(ctx, pubkey, data, sigType)
-		return err
-	})
-	return signature, err
-}
-
-// SignTLSWithRetry signs data using TLS with retry logic.
-func (m *CryfteeManager) SignTLSWithRetry(ctx context.Context, pubkey string, data []byte) ([]byte, error) {
-	var signature []byte
-	err := m.withRetry(ctx, func() error {
-		var err error
-		signature, err = m.SignTLS(ctx, pubkey, data)
-		return err
-	})
-	return signature, err
+	return true
 }
