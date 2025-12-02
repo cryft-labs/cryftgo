@@ -253,4 +253,8 @@ type StakingConfig struct {
 	Web3SignerEphemeral      bool   `json:"web3SignerEphemeral"`
 	Web3SignerKeyMaterialB64 string `json:"web3SignerKeyMaterialB64"`
 	Web3SignerURL            string `json:"web3SignerURL"`
+
+	// ArchiveMode indicates this node is an archive/full node only (no validation).
+	// When true, BLS key initialization is skipped since it's not needed.
+	ArchiveMode bool `json:"archiveMode"`
 }

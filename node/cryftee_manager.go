@@ -941,3 +941,66 @@ func (m *CryfteeManager) IsRunning() bool {
 
 	return true
 }
+
+// InitTLSKeyOnly initializes only the TLS key for archive/full nodes.
+// Archive nodes don't participate in consensus and don't need BLS keys.
+func (m *CryfteeManager) InitTLSKeyOnly(ctx context.Context, status *StakingStatus) (*TLSKeyInfo, error) {
+	savedTLSPubkey := m.loadSavedTLSPubkey()
+
+	if savedTLSPubkey != "" {
+		m.log.Info("verifying existing TLS key from local store (archive mode)",
+			zap.String("pubkey", truncateKey(savedTLSPubkey)),
+		)
+
+		resp, err := m.verifyKey(ctx, "/v1/staking/tls/register", savedTLSPubkey)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"FATAL: TLS key %s from local store not found in Web3Signer. "+
+					"Node ID would change if we regenerated - this is not safe. "+
+					"Error: %w",
+				truncateKey(savedTLSPubkey), err)
+		}
+
+		tlsKey := &TLSKeyInfo{
+			PublicKey:  savedTLSPubkey,
+			NodeID:     deriveNodeID(savedTLSPubkey),
+			SecretPath: resp.KeyHandle,
+			CreatedAt:  time.Now().Unix(),
+		}
+		m.log.Info("✓ TLS key verified in Web3Signer (archive mode)",
+			zap.String("nodeID", tlsKey.NodeID),
+		)
+		return tlsKey, nil
+	}
+
+	m.log.Info("no TLS key in local store, generating new key via Web3Signer (archive mode)")
+
+	resp, err := m.generateKey(ctx, "/v1/staking/tls/register", "SECP256K1", "node_tls")
+	if err != nil {
+		return nil, fmt.Errorf("TLS key generation failed: %w", err)
+	}
+
+	nodeID := resp.NodeID
+	if nodeID == "" {
+		nodeID = deriveNodeID(resp.PublicKey)
+	}
+
+	tlsKey := &TLSKeyInfo{
+		PublicKey:   resp.PublicKey,
+		NodeID:      nodeID,
+		SecretPath:  resp.KeyHandle,
+		Certificate: resp.Certificate,
+		CreatedAt:   time.Now().Unix(),
+	}
+
+	if err := m.saveTLSPubkey(resp.PublicKey); err != nil {
+		m.log.Warn("failed to save TLS pubkey to local store", zap.Error(err))
+	}
+
+	m.log.Info("✓ generated new TLS key (archive mode)",
+		zap.String("nodeID", nodeID),
+		zap.String("pubkey", truncateKey(resp.PublicKey)),
+	)
+
+	return tlsKey, nil
+}

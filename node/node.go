@@ -1296,12 +1296,25 @@ func New(
 			return nil, fmt.Errorf("Web3Signer not ready: %w", err)
 		}
 
-		// Initialize keys using the new verify/generate flow
-		// CryftGo's local store is authoritative - verify existing or generate new
-		blsKeyInfo, tlsKeyInfo, err := n.cryfteeManager.InitKeys(ctx, status)
-		if err != nil {
-			_ = n.cryfteeManager.Stop()
-			return nil, fmt.Errorf("key initialization failed: %w", err)
+		// Initialize keys based on node role
+		var blsKeyInfo *BLSKeyInfo
+		var tlsKeyInfo *TLSKeyInfo
+
+		if config.ArchiveMode {
+			// Archive nodes only need TLS key for P2P identity
+			logger.Info("archive mode enabled, skipping BLS key initialization")
+			tlsKeyInfo, err = n.cryfteeManager.InitTLSKeyOnly(ctx, status)
+			if err != nil {
+				_ = n.cryfteeManager.Stop()
+				return nil, fmt.Errorf("TLS key initialization failed: %w", err)
+			}
+		} else {
+			// Validators need both BLS and TLS keys
+			blsKeyInfo, tlsKeyInfo, err = n.cryfteeManager.InitKeys(ctx, status)
+			if err != nil {
+				_ = n.cryfteeManager.Stop()
+				return nil, fmt.Errorf("key initialization failed: %w", err)
+			}
 		}
 
 		// Parse NodeID from the TLS key info
