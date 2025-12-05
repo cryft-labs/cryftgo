@@ -127,6 +127,12 @@ type CryfteeManagerConfig struct {
 
 	// Web3SignerKeyMaterialB64 is the base64-encoded BLS key for ephemeral mode.
 	Web3SignerKeyMaterialB64 string
+
+	// ConfigFile is an optional path to a configuration file for cryftee.
+	ConfigFile string
+
+	// EnabledModules is an optional list of modules to enable in cryftee.
+	EnabledModules []string
 }
 
 // CryfteeManager handles the lifecycle of the cryftee sidecar process.
@@ -253,6 +259,40 @@ func (m *CryfteeManager) VerifyBinaryIntegrity(computedHash string) error {
 	return fmt.Errorf("cryftee binary hash %s does not match any expected hash", computedHash)
 }
 
+// writeCryfteeConfig writes a config file for CryftTEE before launching
+func (m *CryfteeManager) writeCryfteeConfig() (string, error) {
+	configPath := filepath.Join(m.config.KeyDataDir, "cryftee_config.json")
+
+	cfg := map[string]interface{}{
+		"api": map[string]interface{}{
+			"transport": string(m.config.Transport),
+			"uds_path":  m.config.SocketPath,
+			"http_addr": m.config.HTTPAddr,
+		},
+		"modules": map[string]interface{}{
+			"staking": map[string]interface{}{
+				"enabled":            m.config.Web3SignerEnabled,
+				"web3signer_url":     m.config.Web3SignerURL,
+				"web3signer_enabled": m.config.Web3SignerEnabled,
+			},
+		},
+		"security": map[string]interface{}{
+			"verified_binary_hash": m.verifiedHash,
+		},
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		return "", err
+	}
+
+	return configPath, nil
+}
+
 // Start launches the cryftee process with the verified binary hash in the environment.
 func (m *CryfteeManager) Start(ctx context.Context) error {
 	// Step 1: Compute binary hash BEFORE launching
@@ -272,19 +312,23 @@ func (m *CryfteeManager) Start(ctx context.Context) error {
 		return err
 	}
 
-	// Step 3: Build command with verified hash in the environment
+	// Step 3: Write config file for CryftTEE
+	configPath, err := m.writeCryfteeConfig()
+	if err != nil {
+		m.log.Warn("failed to write cryftee config file, will use env vars only", zap.Error(err))
+	}
+
+	// Step 4: Build command with verified hash in the environment
 	m.process = exec.CommandContext(ctx, m.config.BinaryPath, m.config.Args...)
 
 	// Set up environment with verified hash and transport config
 	// These values MUST match what cryftee expects
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("%s=%s", CryfteeVerifiedBinaryHashEnv, hash))
-	env = append(env, fmt.Sprintf("CRYFTEE_API_TRANSPORT=%s", m.config.Transport))
 
-	if m.config.Transport == TransportUDS {
-		env = append(env, fmt.Sprintf("CRYFTEE_UDS_PATH=%s", m.config.SocketPath))
-	} else {
-		env = append(env, fmt.Sprintf("CRYFTEE_HTTP_ADDR=%s", m.config.HTTPAddr))
+	// Point CryftTEE to its config file
+	if configPath != "" {
+		env = append(env, fmt.Sprintf("CRYFTEE_CONFIG_FILE=%s", configPath))
 	}
 
 	// Pass Web3Signer URL
@@ -301,6 +345,21 @@ func (m *CryfteeManager) Start(ctx context.Context) error {
 		if m.config.Web3SignerKeyMaterialB64 != "" {
 			env = append(env, fmt.Sprintf("CRYFTEE_WEB3SIGNER_KEY_MATERIAL=%s", m.config.Web3SignerKeyMaterialB64))
 		}
+	}
+
+	// Pass additional configuration that CryftTEE might need
+	if m.config.KeyDataDir != "" {
+		env = append(env, fmt.Sprintf("CRYFTEE_KEY_DATA_DIR=%s", m.config.KeyDataDir))
+	}
+
+	// If you add a config file path to CryfteeManagerConfig:
+	if m.config.ConfigFile != "" {
+		env = append(env, fmt.Sprintf("CRYFTEE_CONFIG_FILE=%s", m.config.ConfigFile))
+	}
+
+	// Module enablement (if CryftTEE supports selective module loading)
+	if len(m.config.EnabledModules) > 0 {
+		env = append(env, fmt.Sprintf("CRYFTEE_MODULES_ENABLED=%s", strings.Join(m.config.EnabledModules, ",")))
 	}
 
 	m.process.Env = env

@@ -220,7 +220,7 @@ const (
 	StakingWeb3SignerKeyMaterialB64Key = "staking-web3signer-key-material"
 	StakingWeb3SignerURLKey            = "web3signer-url" // URL of Web3Signer instance
 
-	// ArchiveModeKey enables archive-only mode (no BLS key needed)
+	// Archive mode
 	ArchiveModeKey = "archive-mode"
 )
 

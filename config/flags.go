@@ -271,6 +271,9 @@ func addNodeFlags(fs *pflag.FlagSet) {
 	fs.String(StakingWeb3SignerKeyMaterialB64Key, "", "Base64-encoded key material for ephemeral mode")
 	fs.String(StakingWeb3SignerURLKey, DefaultWeb3SignerURL, "URL of Web3Signer instance")
 
+	// Archive mode
+	fs.Bool(ArchiveModeKey, false, "Run as archive/full node only (skips BLS key initialization)")
+
 	// Sybil Protection
 	fs.Bool(SybilProtectionEnabledKey, true, "Enables sybil protection. If enabled, Network TLS is required")
 	fs.Uint64(SybilProtectionDisabledWeightKey, 100, "Weight to provide to each peer when sybil protection is disabled")
